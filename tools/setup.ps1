@@ -33,7 +33,7 @@ if (-not $SkipDownload) {
     & "$PSScriptRoot\fetch-mariadb.ps1"
 }
 elseif (-not (Test-Path (Join-Path $serverDir 'mangosd.exe'))) {
-    Write-Warning "no server\mangosd.exe — run without -SkipDownload or drop a build in server\"
+    Write-Warning 'no server\mangosd.exe — run without -SkipDownload or drop a build in server\'
 }
 
 $bin = Find-MariaDbBin -Root $root
