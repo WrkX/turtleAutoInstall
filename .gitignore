@@ -1,0 +1,37 @@
+# Downloaded at setup — leave out of git
+/mariadb/**
+!/mariadb/.gitkeep
+/data/mysql/**
+!/data/mysql/.gitkeep
+/logs/**
+!/logs/.gitkeep
+
+# Your build / data / sql copies
+/server/**
+!/server/.gitkeep
+!/server/README.md
+/sql/**
+!/sql/.gitkeep
+!/sql/README.md
+/maps/**
+!/maps/.gitkeep
+!/maps/README.md
+
+# Written by setup
+/conf/my.ini
+/conf/mangosd.conf
+/conf/realmd.conf
+/conf/aiplayerbot.conf
+/conf/ahbot.conf
+/server/*.conf
+!/server/*.conf.dist
+!/server/*.conf.dist.in
+
+/portable.local.env
+*.pid
+*.dmp
+crash_*.dmp
+Thumbs.db
+*.zip
+*.7z
+/tools/.cache/

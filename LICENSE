@@ -1,0 +1,4 @@
+Helper scripts for a portable Tortoise-WoW Windows package.
+
+Redistribute MariaDB only with its own license (GPL). The server binaries
+follow the tortoise-wow / MaNGOS terms of whatever build you ship alongside.
