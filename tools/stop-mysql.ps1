@@ -2,7 +2,7 @@
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
 
-$port = [int](Get-EnvValue $envMap 'MYSQL_PORT' '3306')
+$port = [int](Get-EnvValue $envMap 'MYSQL_PORT' '3307')
 $rootUser = Get-EnvValue $envMap 'MYSQL_ROOT_USER' 'root'
 $rootPass = Get-EnvValue $envMap 'MYSQL_ROOT_PASSWORD' ''
 
@@ -12,15 +12,16 @@ if (-not $bin) {
     exit 0
 }
 $client = Get-MysqlClientPath -BinDir $bin
+$myIni = Join-Path $root 'conf\my.ini'
 
-if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port)) {
+if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni)) {
     Write-Host "nothing listening on $port"
     exit 0
 }
 
 Write-Host "SHUTDOWN on $port"
 try {
-    Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute 'SHUTDOWN;'
+    Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute 'SHUTDOWN;'
 }
 catch {
     Write-Warning "SHUTDOWN failed ($_) - killing recorded pid"
@@ -35,7 +36,7 @@ catch {
 
 $deadline = (Get-Date).AddSeconds(30)
 while ((Get-Date) -lt $deadline) {
-    if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port)) {
+    if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni)) {
         Write-Host 'stopped'
         exit 0
     }

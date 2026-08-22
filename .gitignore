@@ -3,6 +3,7 @@
 !/mariadb/.gitkeep
 /data/mysql/**
 !/data/mysql/.gitkeep
+/data/mysql-tmp/**
 /logs/**
 !/logs/.gitkeep
 

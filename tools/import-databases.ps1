@@ -8,7 +8,7 @@
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
 
-$port = [int](Get-EnvValue $envMap 'MYSQL_PORT' '3306')
+$port = [int](Get-EnvValue $envMap 'MYSQL_PORT' '3307')
 $rootUser = Get-EnvValue $envMap 'MYSQL_ROOT_USER' 'root'
 $rootPass = Get-EnvValue $envMap 'MYSQL_ROOT_PASSWORD' ''
 $user = Get-EnvValue $envMap 'MYSQL_USER' 'mangos'
@@ -20,29 +20,23 @@ $worldPort = [int](Get-EnvValue $envMap 'WORLD_PORT' '8090')
 $bin = Find-MariaDbBin -Root $root
 if (-not $bin) { throw 'MariaDB not found. Run tools\fetch-mariadb.ps1 first.' }
 $client = Get-MysqlClientPath -BinDir $bin
+$myIni = Join-Path $root 'conf\my.ini'
 $sqlRoot = Join-Path $root 'sql'
 
 function Import-SqlFile {
     param([string]$File, [string]$Database = '', [switch]$Force)
     Write-Host "  $(Split-Path -Leaf $File)"
-    $argList = @("-u$rootUser", "-h127.0.0.1", "-P$port")
-    if ($rootPass) { $argList = @("-u$rootUser", "-p$rootPass", "-h127.0.0.1", "-P$port") }
+    $argList = Build-MysqlClientArgs -BinDir $bin -DefaultsFile $myIni -User $rootUser -Password $rootPass -Port $port
     if ($Force) { $argList += '--force' }
     if ($Database) { $argList += $Database }
 
-    $quotedClient = '"' + $client + '"'
-    $quotedFile = '"' + $File + '"'
-    $argString = ($argList | ForEach-Object {
-        if ($_ -match '\s') { '"' + $_ + '"' } else { $_ }
-    }) -join ' '
-
-    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "$quotedClient $argString < $quotedFile" -Wait -PassThru -NoNewWindow
-    if ($p.ExitCode -ne 0 -and -not $Force) {
-        throw "Import failed: $File (exit $($p.ExitCode))"
+    Get-Content -LiteralPath $File -Raw | & $client @argList
+    if ($LASTEXITCODE -ne 0 -and -not $Force) {
+        throw "Import failed: $File (exit $($LASTEXITCODE))"
     }
 }
 
-Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port
+Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni
 
 Write-Host "Creating user $user (no grants yet) ..."
 $createUserSql = @"
@@ -58,7 +52,7 @@ GRANT ALL PRIVILEGES ON tw_world.* TO '$user'@'127.0.0.1';
 GRANT ALL PRIVILEGES ON tw_logs.* TO '$user'@'127.0.0.1';
 FLUSH PRIVILEGES;
 "@
-Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute "CREATE USER IF NOT EXISTS '$user'@'localhost' IDENTIFIED BY '$pass'; CREATE USER IF NOT EXISTS '$user'@'127.0.0.1' IDENTIFIED BY '$pass'; FLUSH PRIVILEGES;"
+Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute "CREATE USER IF NOT EXISTS '$user'@'localhost' IDENTIFIED BY '$pass'; CREATE USER IF NOT EXISTS '$user'@'127.0.0.1' IDENTIFIED BY '$pass'; FLUSH PRIVILEGES;"
 
 $createSql = Join-Path $sqlRoot 'create_databases.sql'
 if (-not (Test-Path $createSql)) {
@@ -68,7 +62,7 @@ Write-Host "Importing create_databases.sql ..."
 Import-SqlFile -File $createSql
 
 Write-Host "Granting on tw_* ..."
-Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute $createUserSql
+Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute $createUserSql
 
 if (-not $SkipBase) {
     $baseDir = Join-Path $sqlRoot 'base'
@@ -93,7 +87,7 @@ if (-not $SkipUpdates) {
             }
         }
         $updateFiles = $updateFiles | Sort-Object FullName -Unique
-        Write-Host "Migrations ($($updateFiles.Count)), --force, then mark applied"
+        Write-Host "Migrations ($($updateFiles.Count)), --force, then mark applied with SHA1"
         foreach ($f in $updateFiles) {
             $db = 'tw_world'
             if ($f.Directory.Name -eq 'character') { $db = 'tw_char' }
@@ -101,10 +95,8 @@ if (-not $SkipUpdates) {
             elseif ($f.Name -match '_character') { $db = 'tw_char' }
             elseif ($f.Name -match '_auth') { $db = 'tw_logon' }
             Import-SqlFile -File $f.FullName -Database $db -Force
-            $name = [IO.Path]::GetFileNameWithoutExtension($f.Name)
-            $escaped = $name.Replace("'", "''")
             try {
-                Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Database $db -Execute "INSERT IGNORE INTO migrations (Name,Hash,AppliedAt) VALUES ('$escaped','manual',NOW());"
+                Set-MigrationApplied -Client $client -BinDir $bin -DefaultsFile $myIni -RootUser $rootUser -RootPass $rootPass -Port $port -Database $db -MigrationFile $f.FullName
             }
             catch {
                 # no migrations table on that DB
@@ -140,7 +132,7 @@ if (-not $SkipPlayerbots) {
 }
 
 Write-Host "realmlist row"
-Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute @"
+Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute @"
 DELETE FROM tw_logon.realmlist;
 INSERT INTO tw_logon.realmlist (id, name, address, port, icon, realmflags, timezone, allowedSecurityLevel, population, realmbuilds)
 VALUES (1, '$realmName', '$realmAddress', $worldPort, 0, 0, 1, 0, 0, '7272');

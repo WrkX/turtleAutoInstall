@@ -8,7 +8,7 @@
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
 
-$port = [int](Get-EnvValue $envMap 'MYSQL_PORT' '3306')
+$port = [int](Get-EnvValue $envMap 'MYSQL_PORT' '3307')
 $rootUser = Get-EnvValue $envMap 'MYSQL_ROOT_USER' 'root'
 $rootPass = Get-EnvValue $envMap 'MYSQL_ROOT_PASSWORD' ''
 $user = Get-EnvValue $envMap 'MYSQL_USER' 'mangos'
@@ -44,7 +44,7 @@ $mariadbBasedir = Split-Path -Parent $bin
 
 # my.ini
 $myIni = Join-Path $confDir 'my.ini'
-$tmpDir = Join-Path $dataMysql 'tmp'
+$tmpDir = Join-Path $root 'data\mysql-tmp'
 New-Item -ItemType Directory -Force -Path $dataMysql, $tmpDir, $logsDir | Out-Null
 
 Write-FromTemplate -TemplatePath (Join-Path $confDir 'my.ini.template') -OutPath $myIni -Replacements @{
@@ -54,32 +54,22 @@ Write-FromTemplate -TemplatePath (Join-Path $confDir 'my.ini.template') -OutPath
     '@TMPDIR@'     = (Convert-ToIniPath $tmpDir)
 }
 
-$needsInit = -not (Test-Path (Join-Path $dataMysql 'mysql'))
-if ($needsInit) {
+if (-not (Test-MysqlDatadirInitialized -DataDir $dataMysql)) {
     Write-Host "init datadir"
-    $installDb = Get-InstallDbPath -BinDir $bin
-    if ($installDb) {
-        $args = @("--datadir=$dataMysql", "--port=$port")
-        if ($rootPass) { $args += "--password=$rootPass" }
-        & $installDb @args
-        if ($LASTEXITCODE -ne 0) { throw "mariadb-install-db failed ($LASTEXITCODE)" }
-    }
-    else {
-        Write-Host "no mariadb-install-db, falling back to --initialize-insecure"
-        & $mysqld --defaults-file="$myIni" --initialize-insecure
-        if ($LASTEXITCODE -ne 0) { throw "mysqld --initialize-insecure failed ($LASTEXITCODE)" }
-    }
+    Initialize-MysqlDatadir -DataDir $dataMysql -BinDir $bin -Mysqld $mysqld -DefaultsFile $myIni -Port $port -RootPassword $rootPass
 }
 else {
     Write-Host "datadir already there, skipping init"
 }
 
+Assert-PortableMysqlPortAvailable -Port $port -MysqldPath $mysqld
+
 $startedHere = $false
-if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port)) {
+if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni)) {
     Write-Host "starting mysqld for import"
     $null = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=$myIni" -PassThru -WindowStyle Minimized
     $startedHere = $true
-    Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -TimeoutSec 90
+    Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -TimeoutSec 90
 }
 
 try {
@@ -97,7 +87,7 @@ try {
         if ($ForceReimport) {
             Write-Host "dropping tw_* databases"
             $dropSql = 'DROP DATABASE IF EXISTS tw_world; DROP DATABASE IF EXISTS tw_char; DROP DATABASE IF EXISTS tw_logon; DROP DATABASE IF EXISTS tw_logs;'
-            Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute $dropSql
+            Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute $dropSql -BinDir $bin -DefaultsFile $myIni
         }
         & "$PSScriptRoot\import-databases.ps1"
         Set-Content -LiteralPath $marker -Value (Get-Date -Format 'o') -Encoding ASCII
@@ -138,7 +128,7 @@ try {
     $botConf = Join-Path $serverDir 'aiplayerbot.conf'
 
     if (Test-Path $mangosdConf) {
-        Patch-ConfDatabaseLines -Path $mangosdConf -Host '127.0.0.1' -Port $port -User $user -Password $pass
+        Patch-ConfDatabaseLines -Path $mangosdConf -DbHost '127.0.0.1' -Port $port -User $user -Password $pass
         Set-ConfValue -Path $mangosdConf -Key 'DataDir' -Value ('"' + (Convert-ToIniPath $mapsDir) + '"')
         Set-ConfValue -Path $mangosdConf -Key 'LogsDir' -Value ('"' + (Convert-ToIniPath $logsDir) + '"')
         Set-ConfValue -Path $mangosdConf -Key 'WorldServerPort' -Value $worldPort
@@ -151,7 +141,7 @@ try {
         Set-ConfValue -Path $mangosdConf -Key 'Leech.Enable' -Value '1'
     }
     if (Test-Path $realmdConf) {
-        Patch-ConfDatabaseLines -Path $realmdConf -Host '127.0.0.1' -Port $port -User $user -Password $pass
+        Patch-ConfDatabaseLines -Path $realmdConf -DbHost '127.0.0.1' -Port $port -User $user -Password $pass
         Set-ConfValue -Path $realmdConf -Key 'LogsDir' -Value ('"' + (Convert-ToIniPath $logsDir) + '/"')
         Set-ConfValue -Path $realmdConf -Key 'RealmServerPort' -Value $realmPort
     }
@@ -171,4 +161,4 @@ finally {
 }
 
 Write-Host 'done. maps + server need to be filled if they are not, then start.bat'
-Write-Host "account create <user> <pass> from the mangosd console"
+Write-Host 'account create <user> <pass> from the mangosd console'
