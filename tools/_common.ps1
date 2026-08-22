@@ -35,6 +35,56 @@ function Get-EnvValue {
     return $Default
 }
 
+function Resolve-TortoiseWowReleaseAsset {
+    param(
+        [hashtable]$EnvMap,
+        [string]$AssetNamePattern,
+        [string]$OverrideUrlKey,
+        [string]$FallbackZipName,
+        [string]$Kind = 'asset'
+    )
+
+    $overrideUrl = Get-EnvValue $EnvMap $OverrideUrlKey ''
+    if ($overrideUrl) {
+        $zipName = [IO.Path]::GetFileName(([Uri]$overrideUrl).LocalPath)
+        if (-not $zipName) { $zipName = $FallbackZipName }
+        return [PSCustomObject]@{
+            Url     = $overrideUrl
+            Name    = $zipName
+            TagName = ''
+        }
+    }
+
+    $repo = Get-EnvValue $EnvMap 'TORTOISE_WOW_REPO' 'WrkX/tortoise-wow'
+    $release = Get-EnvValue $EnvMap 'TORTOISE_WOW_RELEASE' 'latest'
+    $apiBase = "https://api.github.com/repos/$repo/releases"
+    $apiUrl = if ($release -eq 'latest') { "$apiBase/latest" } else { "$apiBase/tags/$release" }
+
+    Write-Host "Resolving $Kind from $repo release $release"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $headers = @{ 'User-Agent' = 'tortoise-wow-portable' }
+    try {
+        $releaseInfo = Invoke-RestMethod -Uri $apiUrl -Headers $headers
+    }
+    catch {
+        throw "Could not fetch release info from $apiUrl — is the release published yet? Set $OverrideUrlKey in portable.local.env to override. $_"
+    }
+
+    $asset = $releaseInfo.assets |
+        Where-Object { $_.name -like $AssetNamePattern } |
+        Select-Object -First 1
+    if (-not $asset) {
+        throw "Release $($releaseInfo.tag_name) has no $AssetNamePattern asset"
+    }
+
+    Write-Host "Using $($releaseInfo.tag_name): $($asset.name)"
+    return [PSCustomObject]@{
+        Url     = $asset.browser_download_url
+        Name    = $asset.name
+        TagName = $releaseInfo.tag_name
+    }
+}
+
 function Convert-ToIniPath {
     param([string]$Path)
     return ($Path -replace '\\', '/')

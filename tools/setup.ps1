@@ -27,12 +27,13 @@ $marker = Join-Path $root 'data\.setup-complete'
 
 Write-Host "setup ($root)"
 
-if (-not (Test-Path (Join-Path $serverDir 'mangosd.exe'))) {
-    Write-Warning "no server\mangosd.exe yet — drop the build in before start.bat"
-}
-
 if (-not $SkipDownload) {
+    & "$PSScriptRoot\fetch-server.ps1"
+    & "$PSScriptRoot\fetch-sql.ps1"
     & "$PSScriptRoot\fetch-mariadb.ps1"
+}
+elseif (-not (Test-Path (Join-Path $serverDir 'mangosd.exe'))) {
+    Write-Warning "no server\mangosd.exe — run without -SkipDownload or drop a build in server\"
 }
 
 $bin = Find-MariaDbBin -Root $root
@@ -82,10 +83,10 @@ if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -P
 }
 
 try {
-    # SQL
+    # SQL — release zip above; local checkout fallback
     $createSql = Join-Path $root 'sql\create_databases.sql'
     if (-not (Test-Path $createSql) -and -not $SkipSqlSync) {
-        Write-Host "sql\ empty, syncing from source tree"
+        Write-Host "sql\ still empty, syncing from source tree"
         & "$PSScriptRoot\sync-sql.ps1"
     }
 

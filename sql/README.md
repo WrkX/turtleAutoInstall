@@ -1,17 +1,11 @@
-Needs to match the tortoise-wow commit your binaries came from:
+Filled by `setup.bat` from the matching
+[tortoise-wow](https://github.com/WrkX/tortoise-wow) release
+(`tortoise-wow-sql-*.zip` — base, migrations, playerbots).
 
-```
-create_databases.sql
-base\
-database_updates\
-playerbots\world\          (+ classic\)
-playerbots\characters\
-```
-
-From a checkout next door:
+Fallback from a checkout next door:
 
 ```
 powershell -File tools\sync-sql.ps1 -Source ..\tortoise-wow
 ```
 
-Or set TORTOISE_WOW_SRC and let setup.bat do it when sql\ is empty.
+Or set `TORTOISE_WOW_SRC` / `TORTOISE_WOW_SQL_ZIP_URL` in `portable.local.env`.
