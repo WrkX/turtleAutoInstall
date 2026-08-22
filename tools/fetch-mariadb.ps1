@@ -1,4 +1,4 @@
-. "$PSScriptRoot\_common.ps1"
+﻿. "$PSScriptRoot\_common.ps1"
 
 $envMap = Import-PortableEnv
 $version = Get-EnvValue $envMap 'MARIADB_VERSION' '10.11.11'

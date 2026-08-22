@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Source = ''
 )
 
@@ -34,7 +34,7 @@ foreach ($dir in @('base', 'database_updates')) {
     $from = Join-Path $srcSql $dir
     $to = Join-Path $dstSql $dir
     if (-not (Test-Path $from)) {
-        Write-Warning "Missing $from — skipped"
+        Write-Warning "Missing $from - skipped"
         continue
     }
     if (Test-Path $to) { Remove-Item -LiteralPath $to -Recurse -Force }

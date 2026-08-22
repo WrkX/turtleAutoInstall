@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $script:RepoRoot = Split-Path -Parent $PSScriptRoot
 
 function Import-PortableEnv {
@@ -67,7 +67,7 @@ function Resolve-TortoiseWowReleaseAsset {
         $releaseInfo = Invoke-RestMethod -Uri $apiUrl -Headers $headers
     }
     catch {
-        throw "Could not fetch release info from $apiUrl — is the release published yet? Set $OverrideUrlKey in portable.local.env to override. $_"
+        throw "Could not fetch release info from $apiUrl - is the release published yet? Set $OverrideUrlKey in portable.local.env to override. $_"
     }
 
     $asset = $releaseInfo.assets |

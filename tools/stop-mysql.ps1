@@ -1,4 +1,4 @@
-. "$PSScriptRoot\_common.ps1"
+﻿. "$PSScriptRoot\_common.ps1"
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
 
@@ -23,7 +23,7 @@ try {
     Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute 'SHUTDOWN;'
 }
 catch {
-    Write-Warning "SHUTDOWN failed ($_) — killing recorded pid"
+    Write-Warning "SHUTDOWN failed ($_) - killing recorded pid"
     $pidFile = Join-Path $root 'data\mysqld.pid'
     if (Test-Path $pidFile) {
         $procId = (Get-Content -LiteralPath $pidFile -Raw).Trim()

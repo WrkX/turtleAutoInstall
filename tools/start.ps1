@@ -1,4 +1,4 @@
-. "$PSScriptRoot\_common.ps1"
+﻿. "$PSScriptRoot\_common.ps1"
 $root = $script:RepoRoot
 $serverDir = Join-Path $root 'server'
 
@@ -9,7 +9,7 @@ if (-not (Test-Path (Join-Path $serverDir 'realmd.exe'))) {
     throw "no server\realmd.exe"
 }
 if (-not (Test-Path (Join-Path $serverDir 'mangosd.conf'))) {
-    throw "no server\mangosd.conf — run setup.bat"
+    throw "no server\mangosd.conf - run setup.bat"
 }
 
 & "$PSScriptRoot\start-mysql.ps1"

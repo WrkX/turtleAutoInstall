@@ -1,4 +1,4 @@
-. "$PSScriptRoot\_common.ps1"
+﻿. "$PSScriptRoot\_common.ps1"
 
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot

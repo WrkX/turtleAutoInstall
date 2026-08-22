@@ -1,4 +1,4 @@
-. "$PSScriptRoot\_common.ps1"
+﻿. "$PSScriptRoot\_common.ps1"
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
 
@@ -7,11 +7,11 @@ $rootUser = Get-EnvValue $envMap 'MYSQL_ROOT_USER' 'root'
 $rootPass = Get-EnvValue $envMap 'MYSQL_ROOT_PASSWORD' ''
 
 $bin = Find-MariaDbBin -Root $root
-if (-not $bin) { throw 'MariaDB missing — run setup.bat first.' }
+if (-not $bin) { throw 'MariaDB missing - run setup.bat first.' }
 $mysqld = Get-MysqldPath -BinDir $bin
 $client = Get-MysqlClientPath -BinDir $bin
 $myIni = Join-Path $root 'conf\my.ini'
-if (-not (Test-Path $myIni)) { throw "no $myIni — run setup.bat first." }
+if (-not (Test-Path $myIni)) { throw "no $myIni - run setup.bat first." }
 
 if (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port) {
     Write-Host "mysqld already up on $port"

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$SkipBase,
     [switch]$SkipUpdates,
     [switch]$SkipPlayerbots
@@ -62,7 +62,7 @@ Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Ex
 
 $createSql = Join-Path $sqlRoot 'create_databases.sql'
 if (-not (Test-Path $createSql)) {
-    throw "Missing $createSql — run tools\sync-sql.ps1 first"
+    throw "Missing $createSql - run tools\sync-sql.ps1 first"
 }
 Write-Host "Importing create_databases.sql ..."
 Import-SqlFile -File $createSql
@@ -112,7 +112,7 @@ if (-not $SkipUpdates) {
         }
     }
     else {
-        Write-Warning "No database_updates — skipped"
+        Write-Warning "No database_updates - skipped"
     }
 }
 
@@ -135,7 +135,7 @@ if (-not $SkipPlayerbots) {
             ForEach-Object { Import-SqlFile -File $_.FullName -Database 'tw_char' }
     }
     else {
-        Write-Warning "No sql\playerbots — mangosd will assert if bots are on"
+        Write-Warning "No sql\playerbots - mangosd will assert if bots are on"
     }
 }
 

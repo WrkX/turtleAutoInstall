@@ -1,4 +1,4 @@
-. "$PSScriptRoot\_common.ps1"
+﻿. "$PSScriptRoot\_common.ps1"
 
 foreach ($name in @('mangosd', 'realmd')) {
     Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {

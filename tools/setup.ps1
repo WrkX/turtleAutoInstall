@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$ForceReimport,
     [switch]$SkipDownload,
     [switch]$SkipSqlSync
@@ -33,7 +33,7 @@ if (-not $SkipDownload) {
     & "$PSScriptRoot\fetch-mariadb.ps1"
 }
 elseif (-not (Test-Path (Join-Path $serverDir 'mangosd.exe'))) {
-    Write-Warning 'no server\mangosd.exe — run without -SkipDownload or drop a build in server\'
+    Write-Warning 'no server\mangosd.exe - run without -SkipDownload or drop a build in server'
 }
 
 $bin = Find-MariaDbBin -Root $root
@@ -83,7 +83,7 @@ if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -P
 }
 
 try {
-    # SQL — release zip above; local checkout fallback
+    # SQL - release zip above; local checkout fallback
     $createSql = Join-Path $root 'sql\create_databases.sql'
     if (-not (Test-Path $createSql) -and -not $SkipSqlSync) {
         Write-Host "sql\ still empty, syncing from source tree"
@@ -91,17 +91,13 @@ try {
     }
 
     if ((Test-Path $marker) -and -not $ForceReimport) {
-        Write-Host "already imported ($marker) — pass -ForceReimport to wipe and reload"
+        Write-Host "already imported ($marker) - pass -ForceReimport to wipe and reload"
     }
     else {
         if ($ForceReimport) {
             Write-Host "dropping tw_* databases"
-            Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute @"
-DROP DATABASE IF EXISTS tw_world;
-DROP DATABASE IF EXISTS tw_char;
-DROP DATABASE IF EXISTS tw_logon;
-DROP DATABASE IF EXISTS tw_logs;
-"@
+            $dropSql = 'DROP DATABASE IF EXISTS tw_world; DROP DATABASE IF EXISTS tw_char; DROP DATABASE IF EXISTS tw_logon; DROP DATABASE IF EXISTS tw_logs;'
+            Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute $dropSql
         }
         & "$PSScriptRoot\import-databases.ps1"
         Set-Content -LiteralPath $marker -Value (Get-Date -Format 'o') -Encoding ASCII
@@ -174,5 +170,5 @@ finally {
     }
 }
 
-Write-Host "done. maps\ + server\ need to be filled if they aren't, then start.bat"
+Write-Host 'done. maps + server need to be filled if they are not, then start.bat'
 Write-Host "account create <user> <pass> from the mangosd console"

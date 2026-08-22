@@ -1,4 +1,4 @@
-. "$PSScriptRoot\_common.ps1"
+﻿. "$PSScriptRoot\_common.ps1"
 
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
@@ -35,7 +35,7 @@ Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
 
 $srcSql = Join-Path $extract 'sql'
 if (-not (Test-Path (Join-Path $srcSql 'create_databases.sql'))) {
-    throw 'Unpack finished but sql\create_databases.sql is missing — bad zip layout?'
+    throw 'Unpack finished but sql\create_databases.sql is missing - bad zip layout?'
 }
 
 if (Test-Path $sqlDir) { Remove-Item -LiteralPath $sqlDir -Recurse -Force }
