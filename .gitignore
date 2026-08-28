@@ -29,6 +29,9 @@
 !/server/*.conf.dist.in
 
 /portable.local.env
+/data/.setup-complete
+/data/.server-release
+/data/.sql-release
 *.pid
 *.dmp
 crash_*.dmp
@@ -36,3 +39,6 @@ Thumbs.db
 *.zip
 *.7z
 /tools/.cache/
+/tortoise.exe
+/tui/tortoise.exe
+/tui/tortoise

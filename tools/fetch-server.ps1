@@ -1,13 +1,18 @@
-﻿. "$PSScriptRoot\_common.ps1"
+﻿param(
+    [switch]$Force
+)
+
+. "$PSScriptRoot\_common.ps1"
 
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
 $serverDir = Join-Path $root 'server'
 $cache = Join-Path $root 'tools\.cache'
+$marker = Join-Path $root 'data\.server-release'
 
 New-Item -ItemType Directory -Force -Path $cache, $serverDir | Out-Null
 
-if (Test-Path (Join-Path $serverDir 'mangosd.exe')) {
+if ((Test-Path (Join-Path $serverDir 'mangosd.exe')) -and -not $Force) {
     Write-Host "Server already at $serverDir"
     exit 0
 }
@@ -25,6 +30,9 @@ if (-not (Test-Path $zipPath)) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $asset.Url -OutFile $zipPath
 }
+elseif ($Force) {
+    Write-Host "Using cached $($asset.Name)"
+}
 
 Write-Host "Unpacking into server\..."
 $extract = Join-Path $cache 'server-extract'
@@ -39,4 +47,10 @@ if (-not (Test-Path (Join-Path $serverDir 'mangosd.exe'))) {
     throw 'Unpack finished but server\mangosd.exe is missing.'
 }
 
-Write-Host "OK: $serverDir"
+$dataDir = Join-Path $root 'data'
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+$tag = $asset.TagName
+if (-not $tag) { $tag = $asset.Name }
+Set-Content -LiteralPath $marker -Value $tag -Encoding ASCII
+
+Write-Host "OK: $serverDir ($tag)"

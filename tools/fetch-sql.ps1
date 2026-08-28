@@ -1,14 +1,19 @@
-﻿. "$PSScriptRoot\_common.ps1"
+﻿param(
+    [switch]$Force
+)
+
+. "$PSScriptRoot\_common.ps1"
 
 $envMap = Import-PortableEnv
 $root = $script:RepoRoot
 $sqlDir = Join-Path $root 'sql'
 $cache = Join-Path $root 'tools\.cache'
-$marker = Join-Path $sqlDir 'create_databases.sql'
+$haveSql = Join-Path $sqlDir 'create_databases.sql'
+$marker = Join-Path $root 'data\.sql-release'
 
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
 
-if (Test-Path $marker) {
+if ((Test-Path $haveSql) -and -not $Force) {
     Write-Host "SQL already at $sqlDir"
     exit 0
 }
@@ -26,6 +31,9 @@ if (-not (Test-Path $zipPath)) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $asset.Url -OutFile $zipPath
 }
+elseif ($Force) {
+    Write-Host "Using cached $($asset.Name)"
+}
 
 Write-Host "Unpacking into sql\..."
 $extract = Join-Path $cache 'sql-extract'
@@ -42,4 +50,10 @@ if (Test-Path $sqlDir) { Remove-Item -LiteralPath $sqlDir -Recurse -Force }
 Move-Item -LiteralPath $srcSql -Destination $sqlDir
 Remove-Item -LiteralPath $extract -Recurse -Force
 
-Write-Host "OK: $sqlDir"
+$dataDir = Join-Path $root 'data'
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+$tag = $asset.TagName
+if (-not $tag) { $tag = $asset.Name }
+Set-Content -LiteralPath $marker -Value $tag -Encoding ASCII
+
+Write-Host "OK: $sqlDir ($tag)"

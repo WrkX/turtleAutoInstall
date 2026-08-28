@@ -16,6 +16,10 @@ Server binaries and SQL come from the
 3. Run `start.bat`.
 4. In the mangosd console: `account create <name> <pass>`.
 
+Optional: `tui.bat` opens a Charm/Bubble Tea dashboard (install, update, start/stop,
+database reimport, settings) that shells out to the same `tools\*.ps1` scripts. Build with
+`go build -o tortoise.exe .\tui` (or `GOOS=windows GOARCH=amd64` from Linux).
+
 Override downloads in `portable.local.env` (copy from `portable.env`):
 `TORTOISE_WOW_RELEASE` to pin a tag like `0.1.1`, direct zip URLs, or
 `TORTOISE_WOW_SRC` if you prefer copying SQL from a local checkout instead.
