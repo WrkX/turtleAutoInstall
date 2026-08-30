@@ -15,33 +15,36 @@ New-Item -ItemType Directory -Force -Path $cache | Out-Null
 $existing = Find-MariaDbBin -Root $root
 if ($existing) {
     Write-Host "MariaDB already at $existing"
-    exit 0
+    return
 }
 
 if (-not (Test-Path $zipPath)) {
     Write-Host "Downloading MariaDB $version from $url"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $url -OutFile $zipPath
+    Save-DownloadFileAtomic -Url $url -OutFile $zipPath
 }
 
 Write-Host "Unpacking..."
-if (Test-Path $dest) {
-    Remove-Item -LiteralPath $dest -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-
 $extract = Join-Path $cache "extract-$version"
 if (Test-Path $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $extract | Out-Null
-Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
+try {
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
+    $inner = Get-ChildItem -LiteralPath $extract -Directory | Select-Object -First 1
+    if (-not $inner) { throw "ZIP had no top-level folder under $extract" }
 
-$inner = Get-ChildItem -LiteralPath $extract -Directory | Select-Object -First 1
-if (-not $inner) { throw "ZIP had no top-level folder under $extract" }
+    if (Test-Path $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    Get-ChildItem -LiteralPath $inner.FullName | Move-Item -Destination $dest
 
-Get-ChildItem -LiteralPath $inner.FullName | Move-Item -Destination $dest
-Remove-Item -LiteralPath $extract -Recurse -Force
-
-$bin = Find-MariaDbBin -Root $root
-if (-not $bin) { throw 'Unpack finished but mysqld/mariadbd is missing.' }
+    $bin = Find-MariaDbBin -Root $root
+    if (-not $bin) { throw 'Unpack finished but mysqld/mariadbd is missing.' }
+}
+catch {
+    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    throw
+}
+finally {
+    Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "OK: $bin"

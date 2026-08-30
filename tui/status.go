@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,32 +14,38 @@ import (
 )
 
 type Status struct {
-	Root          string
-	SetupComplete bool
-	HasMariaDB    bool
-	HasServer     bool
-	HasSQL        bool
-	HasConf       bool
-	HasMapsAll    bool
-	DBC           bool
-	Maps          bool
-	VMaps         bool
-	MMaps         bool
-	Mysqld        bool
-	Realmd        bool
-	Mangosd       bool
-	RealmPort     string
-	WorldPort     string
-	BotRange      string
-	RealmName     string
-	ReleasePin    string
-	MariaVer      string
-	ServerRelease string
-	SQLRelease    string
-	Latest        string
-	LatestErr     string
-	UpdateAvail   bool
-	CheckedAt     time.Time
+	Root           string
+	SetupComplete  bool
+	HasMariaDB     bool
+	HasServer      bool
+	HasMangosdBin  bool
+	HasRealmdBin   bool
+	HasSQL         bool
+	HasConf        bool
+	HasMangosdConf bool
+	HasRealmdConf  bool
+	HasMapsAll     bool
+	DBC            bool
+	Maps           bool
+	VMaps          bool
+	MMaps          bool
+	Mysqld         bool
+	Realmd         bool
+	Mangosd        bool
+	RealmPort      string
+	WorldPort      string
+	RealmAddress   string
+	BotRange       string
+	RealmName      string
+	ReleasePin     string
+	MariaVer       string
+	ServerRelease  string
+	SQLRelease     string
+	MapsUrlSet     bool
+	Latest         string
+	LatestErr      string
+	UpdateAvail    bool
+	CheckedAt      time.Time
 }
 
 func dirHasEntries(path string) bool {
@@ -46,31 +53,60 @@ func dirHasEntries(path string) bool {
 	return err == nil && len(entries) > 0
 }
 
-func processRunning(names ...string) bool {
-	for _, name := range names {
-		var cmd *exec.Cmd
-		if runtime.GOOS == "windows" {
-			cmd = exec.Command("tasklist", "/NH", "/FI", "IMAGENAME eq "+name+".exe")
-		} else {
-			cmd = exec.Command("pgrep", "-x", name)
+func processRunning(name, executable string) bool {
+	if executable == "" {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// tasklist only knows the image name, which can belong to a different
+		// portable install. Query the executable path so status pills are scoped
+		// to this installation just like start.ps1/stop.ps1.
+		script := "$expected=[IO.Path]::GetFullPath($env:TORTOISE_EXPECTED_EXE).TrimEnd('\\').ToLowerInvariant(); $name=$env:TORTOISE_PROCESS_NAME+'.exe'; $found=@(Get-CimInstance Win32_Process -Filter (\"Name='\"+$name+\"'\") -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath([string]$_.ExecutablePath).TrimEnd('\\').ToLowerInvariant() -eq $expected }); if ($found.Count -gt 0) { exit 0 }; exit 1"
+		cmd := exec.Command(powershellBin(), "-NoProfile", "-Command", script)
+		cmd.Env = childEnv(map[string]string{
+			"TORTOISE_EXPECTED_EXE": executable,
+			"TORTOISE_PROCESS_NAME": name,
+		})
+		return cmd.Run() == nil
+	}
+
+	// On Linux, /proc gives us the same exact-path check without relying on a
+	// process name that could be shared by another checkout.
+	out, err := exec.Command("pgrep", "-x", name).Output()
+	if err != nil {
+		return false
+	}
+	expected, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		expected = filepath.Clean(executable)
+	}
+	for _, raw := range strings.Fields(string(out)) {
+		pid, err := strconv.Atoi(raw)
+		if err != nil || pid <= 0 {
+			continue
 		}
-		out, err := cmd.Output()
+		actual := ""
+		if runtime.GOOS == "linux" {
+			actual, err = os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
+		} else {
+			var psOut []byte
+			psOut, err = exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+			actual = strings.TrimSpace(string(psOut))
+		}
 		if err != nil {
 			continue
 		}
-		s := strings.TrimSpace(string(out))
-		if s == "" {
-			continue
+		if resolved, err := filepath.EvalSymlinks(actual); err == nil {
+			actual = resolved
 		}
-		if runtime.GOOS == "windows" && strings.Contains(strings.ToLower(s), "no tasks") {
-			continue
+		if filepath.Clean(actual) == filepath.Clean(expected) {
+			return true
 		}
-		return true
 	}
 	return false
 }
 
-func findMariaDB(root string) bool {
+func findMariaDBExecutable(root string) string {
 	candidates := []string{
 		filepath.Join(root, "mariadb", "bin"),
 	}
@@ -81,13 +117,20 @@ func findMariaDB(root string) bool {
 		}
 	}
 	for _, bin := range candidates {
-		for _, exe := range []string{"mysqld.exe", "mariadbd.exe", "mysqld", "mariadbd"} {
-			if _, err := os.Stat(filepath.Join(bin, exe)); err == nil {
-				return true
+		// Match tools/Get-MysqldPath: MariaDB distributions can ship both names,
+		// but start-mysql.ps1 prefers mariadbd.
+		for _, exe := range []string{"mariadbd.exe", "mysqld.exe", "mariadbd", "mysqld"} {
+			path := filepath.Join(bin, exe)
+			if _, err := os.Stat(path); err == nil {
+				return path
 			}
 		}
 	}
-	return false
+	return ""
+}
+
+func findMariaDB(root string) bool {
+	return findMariaDBExecutable(root) != ""
 }
 
 func gatherStatus(root string) Status {
@@ -96,6 +139,7 @@ func gatherStatus(root string) Status {
 
 	st.RealmPort = envOr(env, "REALM_PORT", "3724")
 	st.WorldPort = envOr(env, "WORLD_PORT", "8090")
+	st.RealmAddress = envOr(env, "REALM_ADDRESS", "127.0.0.1")
 	st.ReleasePin = envOr(env, "TORTOISE_WOW_RELEASE", "latest")
 	st.MariaVer = envOr(env, "MARIADB_VERSION", "10.11")
 	st.RealmName = envOr(env, "REALM_NAME", "TurtleWoW")
@@ -109,18 +153,12 @@ func gatherStatus(root string) Status {
 	st.SQLRelease = readTag(filepath.Join(root, "data", ".sql-release"))
 
 	server := filepath.Join(root, "server")
-	for _, exe := range []string{"mangosd.exe", "mangosd"} {
-		if fileExists(filepath.Join(server, exe)) {
-			st.HasServer = true
-			break
-		}
-	}
-	for _, conf := range []string{"mangosd.conf", "realmd.conf"} {
-		if fileExists(filepath.Join(server, conf)) {
-			st.HasConf = true
-			break
-		}
-	}
+	st.HasMangosdBin = fileExists(filepath.Join(server, "mangosd.exe")) || fileExists(filepath.Join(server, "mangosd"))
+	st.HasRealmdBin = fileExists(filepath.Join(server, "realmd.exe")) || fileExists(filepath.Join(server, "realmd"))
+	st.HasServer = st.HasMangosdBin && st.HasRealmdBin
+	st.HasMangosdConf = fileExists(filepath.Join(server, "mangosd.conf"))
+	st.HasRealmdConf = fileExists(filepath.Join(server, "realmd.conf"))
+	st.HasConf = st.HasMangosdConf && st.HasRealmdConf
 	st.HasSQL = fileExists(filepath.Join(root, "sql", "create_databases.sql"))
 
 	maps := filepath.Join(root, "maps")
@@ -129,11 +167,23 @@ func gatherStatus(root string) Status {
 	st.VMaps = dirHasEntries(filepath.Join(maps, "vmaps"))
 	st.MMaps = dirHasEntries(filepath.Join(maps, "mmaps"))
 	st.HasMapsAll = st.DBC && st.Maps && st.VMaps && st.MMaps
+	st.MapsUrlSet = mapsZipURL(root, env) != ""
 
-	st.Mysqld = processRunning("mysqld", "mariadbd")
-	st.Realmd = processRunning("realmd")
-	st.Mangosd = processRunning("mangosd")
+	mysqlExe := findMariaDBExecutable(root)
+	mysqlName := strings.TrimSuffix(filepath.Base(mysqlExe), filepath.Ext(mysqlExe))
+	st.Mysqld = processRunning(mysqlName, mysqlExe)
+	st.Realmd = processRunning("realmd", firstExisting(filepath.Join(server, "realmd.exe"), filepath.Join(server, "realmd")))
+	st.Mangosd = processRunning("mangosd", firstExisting(filepath.Join(server, "mangosd.exe"), filepath.Join(server, "mangosd")))
 	return st
+}
+
+func firstExisting(paths ...string) string {
+	for _, path := range paths {
+		if fileExists(path) {
+			return path
+		}
+	}
+	return ""
 }
 
 func fileExists(path string) bool {
@@ -171,23 +221,24 @@ func mark(ok bool) string {
 	if ok {
 		return okStyle.Render("●")
 	}
-	return badStyle.Render("○")
-}
-
-func procRow(on bool, name, extra string) string {
-	state := dimStyle.Render("stopped")
-	if on {
-		state = okStyle.Render("running")
-	}
-	row := mark(on) + " " + nameStyle.Render(name) + " " + state
-	if extra != "" {
-		row += "  " + dimStyle.Render(extra)
-	}
-	return row
+	return faintStyle.Render("○")
 }
 
 func fileRow(ok bool, name, val string) string {
 	return mark(ok) + " " + nameStyle.Render(name) + " " + val
+}
+
+func pill(on bool, name, extra string) string {
+	dot, label := faintStyle.Render("○"), faintStyle.Render(name)
+	if on {
+		dot = okStyle.Render("●")
+		label = textStyle.Render(name)
+	}
+	out := dot + " " + label
+	if extra != "" {
+		out += dimStyle.Render(extra)
+	}
+	return out
 }
 
 func (s Status) mapsValue() string {
@@ -213,7 +264,7 @@ func (s Status) mapsValue() string {
 		return okStyle.Render("dbc maps vmaps mmaps")
 	}
 	if len(have) == 0 {
-		return badStyle.Render("empty — Turtle 1.18.1 into maps\\")
+		return badStyle.Render("empty — Fetch maps")
 	}
 	return dimStyle.Render(strings.Join(have, " ")) + "  " + badStyle.Render("need "+strings.Join(miss, " "))
 }
@@ -231,19 +282,6 @@ func (s Status) versionLabel(local string, present bool) string {
 	return badStyle.Render("missing")
 }
 
-func (s Status) processesCard(width int) string {
-	body := strings.Join([]string{
-		procRow(s.Mysqld, "MySQL", ""),
-		procRow(s.Realmd, "realmd", ":"+s.RealmPort),
-		procRow(s.Mangosd, "mangosd", ":"+s.WorldPort),
-	}, "\n")
-	fg := colBorder
-	if s.Mysqld && s.Realmd && s.Mangosd {
-		fg = colOk
-	}
-	return card("realm", body, width, fg)
-}
-
 func (s Status) filesCard(width int) string {
 	setupVal := badStyle.Render("not yet")
 	if s.SetupComplete {
@@ -253,25 +291,52 @@ func (s Status) filesCard(width int) string {
 	if s.HasMariaDB {
 		mariadbVal = okStyle.Render(s.MariaVer)
 	}
-	confVal := badStyle.Render("missing")
+	confVal := badStyle.Render("missing mangosd.conf + realmd.conf")
 	if s.HasConf {
 		confVal = dimStyle.Render("mangosd + realmd")
+	} else if s.HasMangosdConf || s.HasRealmdConf {
+		missing := make([]string, 0, 2)
+		if !s.HasMangosdConf {
+			missing = append(missing, "mangosd.conf")
+		}
+		if !s.HasRealmdConf {
+			missing = append(missing, "realmd.conf")
+		}
+		confVal = badStyle.Render("missing " + strings.Join(missing, " + "))
+	}
+	serverVal := s.versionLabel(s.ServerRelease, s.HasServer)
+	if !s.HasServer && (s.HasMangosdBin || s.HasRealmdBin) {
+		missing := make([]string, 0, 2)
+		if !s.HasMangosdBin {
+			missing = append(missing, "mangosd.exe")
+		}
+		if !s.HasRealmdBin {
+			missing = append(missing, "realmd.exe")
+		}
+		serverVal = badStyle.Render("missing " + strings.Join(missing, " + "))
 	}
 	body := strings.Join([]string{
 		fileRow(s.HasMariaDB, "MariaDB", mariadbVal),
-		fileRow(s.HasServer, "Server", s.versionLabel(s.ServerRelease, s.HasServer)),
+		fileRow(s.HasServer, "Server", serverVal),
 		fileRow(s.HasSQL, "SQL", s.versionLabel(s.SQLRelease, s.HasSQL)),
 		fileRow(s.HasConf, "Configs", confVal),
 		fileRow(s.HasMapsAll, "Maps", s.mapsValue()),
 		fileRow(s.SetupComplete, "Setup", setupVal),
 	}, "\n")
-	return card("install", body, width, colBorder)
+	fg := colBorder
+	if s.SetupComplete && s.HasMariaDB && s.HasServer && s.HasSQL && s.HasConf && s.HasMapsAll {
+		fg = colOk
+	}
+	return card("install", body, width, fg)
 }
 
 func (s Status) Hint() string {
+	addr := s.realmAddress()
 	switch {
+	case !s.HasMapsAll && s.MapsUrlSet:
+		return "Maps URL is set. Run Full setup or Fetch maps."
 	case !s.HasMapsAll:
-		return "Put Turtle WoW 1.18.1 (build 7272) into maps\\ — dbc, maps, vmaps, mmaps. The installer does not fetch client data."
+		return "No maps URL yet. Put a public Google Drive share link in conf/maps-url.txt, then Fetch maps."
 	case !s.HasMariaDB || !s.HasServer || !s.HasSQL:
 		return "Run Full setup to download MariaDB, server binaries, and SQL, then import the databases."
 	case !s.SetupComplete:
@@ -281,34 +346,34 @@ func (s Status) Hint() string {
 		if have == "" {
 			have = s.SQLRelease
 		}
-		return fmt.Sprintf("GitHub has %s (you have %s). Update pulls new binaries and SQL; characters stay unless you reimport.", s.Latest, have)
+		return fmt.Sprintf("GitHub has %s (you have %s). Update keeps characters; Reimport wipes them.", s.Latest, have)
 	case !s.Mangosd:
-		return fmt.Sprintf("Start the realm, then in the mangosd window: account create <name> <pass>. realmlist → %s  ·  bots %s", "127.0.0.1", s.BotRange)
+		return fmt.Sprintf("Start the realm, then Create account (a). realmlist %s  ·  bots %s", addr, s.BotRange)
 	default:
-		return fmt.Sprintf("%s is live. Auth %s · world %s · realmlist 127.0.0.1", s.RealmName, s.RealmPort, s.WorldPort)
+		return fmt.Sprintf("%s is live · set realmlist %s · press c to copy", s.RealmName, addr)
 	}
 }
 
-func (s Status) hintCard(width int) string {
-	fg := colBorder
-	title := "next"
-	if s.UpdateAvail {
-		fg = colWarn
-		title = "update"
-	} else if s.Mysqld && s.Realmd && s.Mangosd {
-		fg = colOk
-		title = "live"
+func (s Status) realmAddress() string {
+	if s.RealmAddress != "" {
+		return s.RealmAddress
 	}
-	body := lipgloss.NewStyle().Foreground(colText).Width(max(width-6, 12)).Render(s.Hint())
-	return card(title, body, width, fg)
+	return "127.0.0.1"
+}
+
+func (s Status) hintBanner(width int) string {
+	mark := accentStyle.Render("›")
+	if s.UpdateAvail {
+		mark = warnStyle.Render("›")
+	} else if s.Mysqld && s.Realmd && s.Mangosd {
+		mark = okStyle.Render("›")
+	}
+	body := lipgloss.NewStyle().Foreground(colText).Width(max(width-3, 12)).Render(s.Hint())
+	return mark + " " + body
 }
 
 func (s Status) column(width int) string {
-	return lipgloss.JoinVertical(lipgloss.Left,
-		s.processesCard(width),
-		s.filesCard(width),
-		s.hintCard(width),
-	)
+	return s.filesCard(width)
 }
 
 func (s Status) versionBadge() string {
@@ -331,35 +396,29 @@ func (s Status) versionBadge() string {
 	return dimStyle.Render(s.ReleasePin)
 }
 
-func (s Status) liveStrip() string {
+func (s Status) livePills() string {
 	return strings.Join([]string{
-		procRow(s.Mysqld, "MySQL", ""),
-		procRow(s.Realmd, "realmd", ""),
-		procRow(s.Mangosd, "mangosd", ""),
+		pill(s.Mysqld, "mysql", ""),
+		pill(s.Realmd, "realmd", " :"+s.RealmPort),
+		pill(s.Mangosd, "mangosd", " :"+s.WorldPort),
 	}, "   ")
 }
 
 func renderHeader(s Status, width int) string {
-	brand := brandStyle.Render("TORTOISE WOW") + tagStyle.Render("  portable")
+	brand := brandStyle.Render("TORTOISE") + " " + brandStyle.Foreground(colCream).Render("WOW") + tagStyle.Render("  portable")
 	badge := s.versionBadge()
-	topW := lipgloss.Width(brand) + lipgloss.Width(badge)
-	var top string
-	if width > topW+2 {
-		gap := width - topW
-		if gap < 1 {
-			gap = 1
-		}
-		top = brand + strings.Repeat(" ", gap) + badge
-		if lipgloss.Width(top) > width {
-			top = brand
-		}
-	} else {
-		top = brand
-	}
-	sub := subStyle.Render("installer  ·  updater  ·  realm control")
+	top := spread(brand, badge, width)
+
+	meta := dimStyle.Render("bots " + s.BotRange)
 	if s.RealmName != "" && s.RealmName != "TurtleWoW" {
-		sub = subStyle.Render(s.RealmName + "  ·  installer  ·  updater")
+		meta = dimStyle.Render(s.RealmName + "  ·  bots " + s.BotRange)
 	}
+	pills := s.livePills()
+	sub := pills
+	if width > lipgloss.Width(pills)+lipgloss.Width(meta)+2 {
+		sub = spread(pills, meta, width)
+	}
+
 	rule := headerRuleStyle.Render(strings.Repeat("─", max(width, 8)))
 	return top + "\n" + sub + "\n" + rule
 }

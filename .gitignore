@@ -30,8 +30,10 @@
 
 /portable.local.env
 /data/.setup-complete
+/data/.setup-incomplete
 /data/.server-release
 /data/.sql-release
+/data/.maps-url-sha256
 *.pid
 *.dmp
 crash_*.dmp

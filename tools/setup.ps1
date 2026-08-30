@@ -24,6 +24,7 @@ $logsDir = Join-Path $root 'logs'
 $dataMysql = Join-Path $root 'data\mysql'
 $confDir = Join-Path $root 'conf'
 $marker = Join-Path $root 'data\.setup-complete'
+$incompleteMarker = Join-Path $root 'data\.setup-incomplete'
 
 Write-Host "setup ($root)"
 
@@ -31,10 +32,16 @@ if (-not $SkipDownload) {
     & "$PSScriptRoot\fetch-server.ps1"
     & "$PSScriptRoot\fetch-sql.ps1"
     & "$PSScriptRoot\fetch-mariadb.ps1"
+    & "$PSScriptRoot\fetch-maps.ps1"
 }
 elseif (-not (Test-Path (Join-Path $serverDir 'mangosd.exe'))) {
     Write-Warning 'no server\mangosd.exe - run without -SkipDownload or drop a build in server'
 }
+
+# A setup that completes without client data produces a server which starts
+# only to fail when it first loads the world. Validate this after both normal
+# downloads and -SkipDownload applies.
+Assert-PortableMapsPresent -MapsDir $mapsDir
 
 $bin = Find-MariaDbBin -Root $root
 if (-not $bin) { throw 'MariaDB bin directory not found after fetch.' }
@@ -64,15 +71,18 @@ else {
 
 Assert-PortableMysqlPortAvailable -Port $port -MysqldPath $mysqld
 
-$startedHere = $false
-if (-not (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni)) {
-    Write-Host "starting mysqld for import"
-    $null = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=$myIni" -PassThru -WindowStyle Minimized
-    $startedHere = $true
-    Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -TimeoutSec 90
-}
-
+$mysqlAlreadyReady = Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni
+$mysqlListener = Get-ListeningProcessForPort -Port $port
+$mysqlAlreadyRunning = ($mysqlListener -and
+    (Test-PortableProcessId -ProcessId ([int]$mysqlListener.ProcessId) -ExecutablePath $mysqld))
+$startedHere = (-not $mysqlAlreadyReady) -and (-not $mysqlAlreadyRunning)
 try {
+    if (-not $mysqlAlreadyReady) {
+        # Use the normal launcher so a readiness failure cannot leave an
+        # untracked mysqld process behind before this try/finally can clean up.
+        & "$PSScriptRoot\start-mysql.ps1"
+    }
+
     # SQL - release zip above; local checkout fallback
     $createSql = Join-Path $root 'sql\create_databases.sql'
     if (-not (Test-Path $createSql) -and -not $SkipSqlSync) {
@@ -84,13 +94,25 @@ try {
         Write-Host "already imported ($marker) - pass -ForceReimport to wipe and reload"
     }
     else {
-        if ($ForceReimport) {
+        $recoveringImport = Test-Path $incompleteMarker
+        Set-Content -LiteralPath $incompleteMarker -Value (Get-Date -Format 'o') -Encoding ASCII
+        Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+        if ($ForceReimport -or $recoveringImport) {
             Write-Host "dropping tw_* databases"
             $dropSql = 'DROP DATABASE IF EXISTS tw_world; DROP DATABASE IF EXISTS tw_char; DROP DATABASE IF EXISTS tw_logon; DROP DATABASE IF EXISTS tw_logs;'
             Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -Execute $dropSql -BinDir $bin -DefaultsFile $myIni
         }
-        & "$PSScriptRoot\import-databases.ps1"
-        Set-Content -LiteralPath $marker -Value (Get-Date -Format 'o') -Encoding ASCII
+        try {
+            & "$PSScriptRoot\import-databases.ps1"
+            Set-Content -LiteralPath $marker -Value (Get-Date -Format 'o') -Encoding ASCII
+            Remove-Item -LiteralPath $incompleteMarker -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            # Keep .setup-incomplete so a rerun first clears any partially
+            # imported databases instead of layering duplicate data over them.
+            Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+            throw
+        }
     }
 
     # confs from .dist beside the binaries
@@ -152,6 +174,14 @@ try {
         Set-ConfValue -Path $botConf -Key 'AiPlayerbot.MinRandomBots' -Value $minBots
         Set-ConfValue -Path $botConf -Key 'AiPlayerbot.MaxRandomBots' -Value $maxBots
     }
+
+    Write-Host "syncing database credentials for $user"
+    Ensure-PortableDatabaseUser -Client $client -BinDir $bin -DefaultsFile $myIni `
+        -RootUser $rootUser -RootPass $rootPass -Port $port -User $user -Password $pass
+
+    # Keep the login database in lockstep with the values just written to the
+    # conf files, including when the import marker caused SQL loading to skip.
+    & "$PSScriptRoot\sync-realmlist.ps1"
 }
 finally {
     if ($startedHere) {
@@ -160,5 +190,5 @@ finally {
     }
 }
 
-Write-Host 'done. maps + server need to be filled if they are not, then start.bat'
-Write-Host 'account create <user> <pass> from the mangosd console'
+Write-Host 'done. run start.bat when the server and maps are ready'
+Write-Host 'create an account with tools\create-account.ps1 -Username <name> (password prompt)'

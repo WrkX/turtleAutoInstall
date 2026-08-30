@@ -30,29 +30,43 @@ function Import-SqlFile {
     if ($Force) { $argList += '--force' }
     if ($Database) { $argList += $Database }
 
-    Get-Content -LiteralPath $File -Raw | & $client @argList
-    if ($LASTEXITCODE -ne 0 -and -not $Force) {
-        throw "Import failed: $File (exit $($LASTEXITCODE))"
+    try {
+        Get-Content -LiteralPath $File -Raw | & $client @argList
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0 -and -not $Force) {
+            throw "Import failed: $File (exit $exitCode)"
+        }
+    }
+    finally {
+        Remove-MysqlDefaultsExtraFile -ArgumentList $argList
     }
 }
 
 Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni
 
 Write-Host "Creating user $user (no grants yet) ..."
+$userSql = ConvertTo-SqlLiteral $user
+$passSql = ConvertTo-SqlLiteral $pass
+$realmNameSql = ConvertTo-SqlLiteral $realmName
+$realmAddressSql = ConvertTo-SqlLiteral $realmAddress
 $createUserSql = @"
-CREATE USER IF NOT EXISTS '$user'@'localhost' IDENTIFIED BY '$pass';
-CREATE USER IF NOT EXISTS '$user'@'127.0.0.1' IDENTIFIED BY '$pass';
-GRANT ALL PRIVILEGES ON tw_char.* TO '$user'@'localhost';
-GRANT ALL PRIVILEGES ON tw_logon.* TO '$user'@'localhost';
-GRANT ALL PRIVILEGES ON tw_world.* TO '$user'@'localhost';
-GRANT ALL PRIVILEGES ON tw_logs.* TO '$user'@'localhost';
-GRANT ALL PRIVILEGES ON tw_char.* TO '$user'@'127.0.0.1';
-GRANT ALL PRIVILEGES ON tw_logon.* TO '$user'@'127.0.0.1';
-GRANT ALL PRIVILEGES ON tw_world.* TO '$user'@'127.0.0.1';
-GRANT ALL PRIVILEGES ON tw_logs.* TO '$user'@'127.0.0.1';
+CREATE USER IF NOT EXISTS $userSql@'localhost' IDENTIFIED BY $passSql;
+CREATE USER IF NOT EXISTS $userSql@'127.0.0.1' IDENTIFIED BY $passSql;
 FLUSH PRIVILEGES;
 "@
-Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute "CREATE USER IF NOT EXISTS '$user'@'localhost' IDENTIFIED BY '$pass'; CREATE USER IF NOT EXISTS '$user'@'127.0.0.1' IDENTIFIED BY '$pass'; FLUSH PRIVILEGES;"
+Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute $createUserSql
+
+$grantSql = @"
+GRANT ALL PRIVILEGES ON tw_char.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_logon.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_world.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_logs.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_char.* TO $userSql@'127.0.0.1';
+GRANT ALL PRIVILEGES ON tw_logon.* TO $userSql@'127.0.0.1';
+GRANT ALL PRIVILEGES ON tw_world.* TO $userSql@'127.0.0.1';
+GRANT ALL PRIVILEGES ON tw_logs.* TO $userSql@'127.0.0.1';
+FLUSH PRIVILEGES;
+"@
 
 $createSql = Join-Path $sqlRoot 'create_databases.sql'
 if (-not (Test-Path $createSql)) {
@@ -62,7 +76,7 @@ Write-Host "Importing create_databases.sql ..."
 Import-SqlFile -File $createSql
 
 Write-Host "Granting on tw_* ..."
-Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute $createUserSql
+Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute $grantSql
 
 if (-not $SkipBase) {
     $baseDir = Join-Path $sqlRoot 'base'
@@ -133,9 +147,9 @@ if (-not $SkipPlayerbots) {
 
 Write-Host "realmlist row"
 Invoke-Mysql -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -Execute @"
-DELETE FROM tw_logon.realmlist;
 INSERT INTO tw_logon.realmlist (id, name, address, port, icon, realmflags, timezone, allowedSecurityLevel, population, realmbuilds)
-VALUES (1, '$realmName', '$realmAddress', $worldPort, 0, 0, 1, 0, 0, '7272');
+VALUES (1, $realmNameSql, $realmAddressSql, $worldPort, 0, 0, 1, 0, 0, '7272')
+ON DUPLICATE KEY UPDATE name=VALUES(name), address=VALUES(address), port=VALUES(port);
 "@
 
 Write-Host "Import done."

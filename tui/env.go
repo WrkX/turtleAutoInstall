@@ -11,25 +11,38 @@ import (
 func loadEnv(root string) map[string]string {
 	out := map[string]string{}
 	for _, name := range []string{"portable.env", "portable.local.env"} {
-		f, err := os.Open(filepath.Join(root, name))
-		if err != nil {
-			continue
-		}
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			k, v, ok := strings.Cut(line, "=")
-			if !ok {
-				continue
-			}
-			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
-		_ = f.Close()
+		mergeEnvFile(out, filepath.Join(root, name))
 	}
 	return out
+}
+
+// loadLocalEnv is used by the Settings form. Defaults from portable.env are
+// deliberately not copied into editable fields: an empty field means that no
+// local override will be written.
+func loadLocalEnv(root string) map[string]string {
+	out := map[string]string{}
+	mergeEnvFile(out, filepath.Join(root, "portable.local.env"))
+	return out
+}
+
+func mergeEnvFile(out map[string]string, path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
 }
 
 func envOr(m map[string]string, key, def string) string {
@@ -37,6 +50,38 @@ func envOr(m map[string]string, key, def string) string {
 		return v
 	}
 	return def
+}
+
+func readFirstURL(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+			return line
+		}
+	}
+	return ""
+}
+
+func mapsZipURL(root string, env map[string]string) string {
+	if v := envOr(env, "TORTOISE_WOW_MAPS_ZIP_URL", ""); v != "" {
+		return v
+	}
+	if envOr(env, "DATANODES_FILE_CODE", "") != "" {
+		return "datanodes"
+	}
+	if u := readFirstURL(filepath.Join(root, "tools", ".cache", "maps-url.txt")); u != "" {
+		return u
+	}
+	return readFirstURL(filepath.Join(root, "conf", "maps-url.txt"))
 }
 
 func readTag(path string) string {
@@ -72,7 +117,12 @@ func saveLocalEnv(root string, updates map[string]string) error {
 		}
 		k = strings.TrimSpace(k)
 		if v, yes := updates[k]; yes {
-			out = append(out, k+"="+v)
+			// Empty form fields are not overrides. Drop an existing managed key
+			// when it is cleared instead of persisting an empty assignment.
+			if strings.TrimSpace(v) == "" {
+				continue
+			}
+			out = append(out, k+"="+strings.TrimSpace(v))
 			seen[k] = true
 			continue
 		}
@@ -81,7 +131,7 @@ func saveLocalEnv(root string, updates map[string]string) error {
 
 	var missing []string
 	for k := range updates {
-		if !seen[k] {
+		if !seen[k] && strings.TrimSpace(updates[k]) != "" {
 			missing = append(missing, k)
 		}
 	}
@@ -91,7 +141,7 @@ func saveLocalEnv(root string, updates map[string]string) error {
 			out = append(out, "")
 		}
 		for _, k := range missing {
-			out = append(out, k+"="+updates[k])
+			out = append(out, k+"="+strings.TrimSpace(updates[k]))
 		}
 	}
 

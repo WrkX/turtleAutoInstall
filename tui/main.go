@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,6 +21,7 @@ const (
 	screenHome screen = iota
 	screenRun
 	screenSettings
+	screenAccount
 	screenConfirm
 )
 
@@ -43,6 +46,7 @@ type model struct {
 	aborted bool
 
 	settings settingsForm
+	account  accountForm
 
 	confirmTitle string
 	confirmBody  string
@@ -96,6 +100,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		latest, latestErr := m.status.Latest, m.status.LatestErr
 		m.status = Status(msg)
 		m.status.applyLatest(latest, latestErr)
+		if m.screen == screenHome && menu[m.cursor].disabled(m.status) != "" {
+			m.cursor = m.nextSelectable(1)
+		}
 		return m, nil
 
 	case latestMsg:
@@ -188,6 +195,8 @@ func (m model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onRunKey(msg)
 	case screenSettings:
 		return m.onSettingsKey(msg)
+	case screenAccount:
+		return m.onAccountKey(msg)
 	case screenConfirm:
 		return m.onConfirmKey(msg)
 	default:
@@ -240,6 +249,10 @@ func (m model) onSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) saveSettings() (tea.Model, tea.Cmd) {
+	if err := m.settings.Validate(); err != nil {
+		m.settings.err = err.Error()
+		return m, nil
+	}
 	if err := saveLocalEnv(m.root, m.settings.Values()); err != nil {
 		m.flash = "could not save: " + err.Error()
 		m.screen = screenHome
@@ -269,6 +282,77 @@ func (m model) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) onAccountKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.screen = screenHome
+		return m, nil
+	case "ctrl+s":
+		return m.submitAccount()
+	case "enter":
+		if m.account.focus >= len(m.account.inputs)-1 {
+			return m.submitAccount()
+		}
+		m.account.focus++
+		m.account.syncFocus()
+		return m, m.account.inputs[m.account.focus].Focus()
+	}
+	cmd := m.account.Update(msg)
+	return m, cmd
+}
+
+func (m model) submitAccount() (tea.Model, tea.Cmd) {
+	user, hash, gm, err := m.account.validate()
+	if err != nil {
+		m.account.err = err.Error()
+		return m, nil
+	}
+	// Keep only the derived hash for the short-lived child handoff; the plain
+	// password is no longer needed after validation.
+	m.account.inputs[1].SetValue("")
+	var steps []scriptStep
+	if !m.status.Mysqld {
+		steps = append(steps, scriptStep{Label: "Start MySQL", Script: "start-mysql.ps1"})
+	}
+	steps = append(steps, scriptStep{
+		Label:  "Create account",
+		Script: "create-account.ps1",
+		Args:   []string{"-Username", user, "-GMLevel", gm},
+		Env:    map[string]string{"TORTOISE_WOW_ACCOUNT_SHA_PASS_HASH": hash},
+	})
+	return m.beginRun("Create account", steps)
+}
+
+func (m model) copyRealmlist() (tea.Model, tea.Cmd) {
+	line := "set realmlist " + m.status.realmAddress()
+	if err := clipboard.WriteAll(line); err != nil {
+		m.flash = line
+		return m, nil
+	}
+	m.flash = "copied  " + line
+	return m, nil
+}
+
+func (m model) openLogs() (tea.Model, tea.Cmd) {
+	dir := filepath.Join(m.root, "logs")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		m.flash = err.Error()
+		return m, nil
+	}
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("explorer", dir)
+	} else {
+		cmd = exec.Command("xdg-open", dir)
+	}
+	if err := cmd.Start(); err != nil {
+		m.flash = err.Error()
+		return m, nil
+	}
+	m.flash = "opened logs"
+	return m, nil
+}
+
 func (m model) onHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
@@ -277,38 +361,57 @@ func (m model) onHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.flash = ""
 		return m, tea.Batch(refreshStatus(m.root), checkLatest(m.root))
-	case "s":
-		m.settings = newSettings(loadEnv(m.root))
-		m.screen = screenSettings
-		m.layout()
-		return m, m.settings.inputs[0].Focus()
+	case "c":
+		return m.copyRealmlist()
+	case "l":
+		return m.openLogs()
 	case "g":
 		return m, checkLatest(m.root)
 	case "up", "k":
-		m.cursor = (m.cursor - 1 + len(menu)) % len(menu)
+		m.cursor = m.nextSelectable(-1)
 		m.flash = ""
 		return m, nil
 	case "down", "j":
-		m.cursor = (m.cursor + 1) % len(menu)
+		m.cursor = m.nextSelectable(1)
 		m.flash = ""
 		return m, nil
 	case "enter", " ":
 		return m.activate()
-	case "u":
-		if i := menuIndex("update"); i >= 0 {
+	default:
+		if i := menuIndexByKey(msg.String()); i >= 0 {
 			m.cursor = i
+			m.flash = ""
 			return m.activate()
 		}
-	default:
 		if len(msg.String()) == 1 && msg.String()[0] >= '1' && msg.String()[0] <= '9' {
 			n := int(msg.String()[0] - '1')
 			if n >= 0 && n < len(menu) {
 				m.cursor = n
+				m.flash = ""
 				return m.activate()
 			}
 		}
 	}
 	return m, nil
+}
+
+func (m model) nextSelectable(delta int) int {
+	if len(menu) == 0 {
+		return 0
+	}
+	if delta == 0 {
+		if menu[m.cursor].disabled(m.status) == "" {
+			return m.cursor
+		}
+		delta = 1
+	}
+	for n := 0; n < len(menu); n++ {
+		idx := (m.cursor + delta*(n+1) + len(menu)*2) % len(menu)
+		if menu[idx].disabled(m.status) == "" {
+			return idx
+		}
+	}
+	return m.cursor
 }
 
 func (m model) activate() (tea.Model, tea.Cmd) {
@@ -323,14 +426,28 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case "settings":
-		m.settings = newSettings(loadEnv(m.root))
+		m.settings = newSettings(loadLocalEnv(m.root))
 		m.screen = screenSettings
 		m.layout()
 		return m, m.settings.inputs[0].Focus()
+	case "account":
+		m.account = newAccountForm()
+		m.screen = screenAccount
+		m.layout()
+		return m, m.account.inputs[0].Focus()
 	}
 
 	steps := m.planSteps(a)
 	label := a.Title
+
+	if a.ID == "fetch-maps" && m.status.HasMapsAll {
+		m.screen = screenConfirm
+		m.confirmTitle = a.Title
+		m.confirmBody = "Maps are already in maps\\. Re-download and replace dbc/maps/vmaps/mmaps?"
+		m.pending = steps
+		m.pendingLabel = label
+		return m, nil
+	}
 
 	if a.Confirm != "" {
 		if a.ID == "setup" && !m.status.SetupComplete && !m.status.anythingRunning() {
@@ -369,7 +486,11 @@ func (m model) planSteps(a action) []scriptStep {
 	if a.NeedsMySQL && !m.status.Mysqld {
 		steps = append(steps, scriptStep{Label: "Start MySQL", Script: "start-mysql.ps1"})
 	}
-	steps = append(steps, scriptStep{Label: a.Title, Script: a.Script, Args: a.Args})
+	args := append([]string{}, a.Args...)
+	if a.ID == "fetch-maps" && m.status.HasMapsAll {
+		args = []string{"-Force"}
+	}
+	steps = append(steps, scriptStep{Label: a.Title, Script: a.Script, Args: args})
 	return steps
 }
 
@@ -403,7 +524,7 @@ func (m *model) runNext() tea.Cmd {
 		m.vp.SetContent(m.log.String())
 		m.vp.GotoBottom()
 	}
-	return startStream(m.root, step.Script, step.Args)
+	return startStreamEnv(m.root, step.Script, step.Args, step.Env)
 }
 
 func (m *model) layout() {
@@ -450,6 +571,8 @@ func (m model) View() string {
 		return m.runView()
 	case screenSettings:
 		return m.settingsView()
+	case screenAccount:
+		return m.accountView()
 	case screenConfirm:
 		return m.confirmView()
 	default:
@@ -459,12 +582,14 @@ func (m model) View() string {
 
 func (m model) homeView() string {
 	header := renderHeader(m.status, m.width)
+	hint := m.status.hintBanner(m.width)
 	leftW, rightW := splitWidths(m.width)
 	left := m.status.column(leftW)
 
 	headerH := lipgloss.Height(header)
+	hintH := lipgloss.Height(hint)
 	helpH := 1
-	remain := m.height - headerH - helpH - 1
+	remain := m.height - headerH - hintH - helpH - 2
 	if remain < 10 {
 		remain = 10
 	}
@@ -487,7 +612,7 @@ func (m model) homeView() string {
 		body = lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
 
-	help := helpStyle.Render("↑↓ move  enter run  s settings  r refresh  u update  q quit")
+	help := helpStyle.Render("↑↓ enter  a account  c copy  s settings  u update  l logs  r refresh  q")
 	if m.flash != "" {
 		help = warnStyle.Render(m.flash)
 	}
@@ -495,7 +620,7 @@ func (m model) homeView() string {
 		help += "\n" + faintStyle.Render("scripts expect Windows + PowerShell; pwsh is used here")
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, help)
+	return lipgloss.JoinVertical(lipgloss.Left, header, hint, body, help)
 }
 
 func (m model) menuCard(width, height int) string {
@@ -520,7 +645,13 @@ func (m model) renderMenu(width, height int) string {
 			if lastGroup != "" {
 				lines = append(lines, "")
 			}
-			lines = append(lines, faintStyle.Render(strings.ToUpper(a.Group)))
+			label := strings.ToUpper(a.Group)
+			pad := width - len(label) - 1
+			head := label
+			if pad > 2 {
+				head = label + " " + strings.Repeat("─", pad)
+			}
+			lines = append(lines, faintStyle.Render(head))
 			lastGroup = a.Group
 		}
 		disabled := a.disabled(m.status) != ""
@@ -529,31 +660,33 @@ func (m model) renderMenu(width, height int) string {
 			cursorLine = len(lines)
 		}
 
-		prefix := "  "
-		title := a.Title
-		st := itemStyle
-		if disabled {
-			st = offStyle
-		} else if a.Danger {
-			st = dangerStyle
+		key := a.Key
+		if key == "q" {
+			key = ""
 		}
+
 		if selected {
-			prefix = selTitleStyle.Render("▸ ")
-			if disabled {
-				title = offStyle.Render(a.Title)
-			} else if a.Danger {
-				title = dangerStyle.Bold(true).Render(a.Title)
-			} else {
-				title = selTitleStyle.Render(a.Title)
+			style := selRowStyle
+			if a.Danger {
+				style = selRowStyle.Foreground(colDanger)
 			}
-			lines = append(lines, prefix+title)
+			row := spread("▸ "+a.Title, key, max(width, 8))
+			lines = append(lines, style.Width(max(width, 8)).Render(row))
 			desc := a.Desc
 			if reason := a.disabled(m.status); reason != "" {
 				desc = reason
 			}
-			lines = append(lines, "    "+selDescStyle.Width(max(width-4, 8)).Render(desc))
+			lines = append(lines, selDescStyle.Width(max(width, 8)).Render("  "+desc))
 		} else {
-			lines = append(lines, prefix+st.Render(title))
+			st := itemStyle
+			if disabled {
+				st = offStyle
+			} else if a.Danger {
+				st = dangerStyle
+			}
+			left := "  " + st.Render(a.Title)
+			right := keyStyle.Render(key)
+			lines = append(lines, spread(left, right, max(width, 8)))
 		}
 	}
 
@@ -603,6 +736,20 @@ func (m model) settingsView() string {
 	used := lipgloss.Height(header) + 2
 	body := m.settings.View(m.width, max(m.height-used, 8))
 	help := helpStyle.Render("↑↓ field  enter next/save  ctrl+s save  esc cancel")
+	if m.settings.err != "" {
+		help = errStyle.Render("error: " + m.settings.err)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, help)
+}
+
+func (m model) accountView() string {
+	header := renderHeader(m.status, m.width)
+	used := lipgloss.Height(header) + 2
+	body := m.account.View(m.width, max(m.height-used, 8))
+	help := helpStyle.Render("↑↓ field  enter next/create  ctrl+s create  esc cancel")
+	if m.account.err != "" {
+		help = errStyle.Render("error: " + m.account.err)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, help)
 }
 

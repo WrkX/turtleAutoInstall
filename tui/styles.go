@@ -1,6 +1,10 @@
 package main
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 var (
 	colGold   = lipgloss.Color("178")
@@ -16,6 +20,7 @@ var (
 	colAccent = lipgloss.Color("114")
 	colBorder = lipgloss.Color("136")
 	colDanger = lipgloss.Color("174")
+	colSelBg  = lipgloss.Color("236")
 )
 
 var (
@@ -26,8 +31,6 @@ var (
 	tagStyle = lipgloss.NewStyle().
 			Foreground(colMoss).
 			Italic(true)
-
-	subStyle = lipgloss.NewStyle().Foreground(colMuted)
 
 	cardTitleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -49,16 +52,21 @@ var (
 
 	selTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colGoldHi)
 	selDescStyle  = lipgloss.NewStyle().Foreground(colMoss)
-	itemStyle     = lipgloss.NewStyle().Foreground(colText)
-	offStyle      = lipgloss.NewStyle().Foreground(colFaint)
-	dangerStyle   = lipgloss.NewStyle().Foreground(colDanger)
+	selRowStyle   = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colGoldHi).
+			Background(colSelBg)
+	itemStyle   = lipgloss.NewStyle().Foreground(colText)
+	offStyle    = lipgloss.NewStyle().Foreground(colFaint)
+	dangerStyle = lipgloss.NewStyle().Foreground(colDanger)
+	keyStyle    = lipgloss.NewStyle().Foreground(colFaint)
 
 	runningTitleStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(colGoldHi)
 
 	confirmBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.DoubleBorder()).
+			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colGold).
 			Padding(1, 2)
 
@@ -76,6 +84,18 @@ func card(title, body string, width int, border lipgloss.Color) string {
 		Padding(0, 1).
 		Width(width - 2).
 		Render(content)
+}
+
+func spread(left, right string, width int) string {
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	gap := width - lw - rw
+	if gap < 1 {
+		if rw == 0 || width < lw {
+			return left
+		}
+		return left + " " + right
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func max(a, b int) int {

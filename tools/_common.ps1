@@ -35,6 +35,64 @@ function Get-EnvValue {
     return $Default
 }
 
+function Get-StringSha256Hex {
+    param([string]$Value)
+
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Save-DownloadFileAtomic {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [string]$UserAgent = '',
+        [string]$CookieJar = ''
+    )
+
+    $parent = Split-Path -Parent $OutFile
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $partial = "$OutFile.partial"
+    if (Test-Path $partial) {
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+    }
+
+    try {
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curl) {
+            # Do not use --silent: curl's progress meter is useful for large assets.
+            $curlArgs = @('-L', '--fail', '--retry', '3', '-o', $partial)
+            if ($UserAgent) { $curlArgs += @('-A', $UserAgent) }
+            if ($CookieJar) { $curlArgs = @('-c', $CookieJar, '-b', $CookieJar) + $curlArgs }
+            $curlArgs += $Url
+            & curl.exe @curlArgs
+            if ($LASTEXITCODE -ne 0) { throw "curl download failed ($LASTEXITCODE)" }
+        }
+        else {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $invokeArgs = @{ Uri = $Url; OutFile = $partial; UseBasicParsing = $true }
+            if ($UserAgent) { $invokeArgs['UserAgent'] = $UserAgent }
+            Invoke-WebRequest @invokeArgs
+        }
+
+        if (-not (Test-Path $partial)) { throw 'download completed without creating an output file' }
+        # The rename keeps an existing complete file until the new download is ready.
+        Move-Item -LiteralPath $partial -Destination $OutFile -Force
+    }
+    catch {
+        if (Test-Path $partial) {
+            Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    }
+}
+
 function Resolve-TortoiseWowReleaseAsset {
     param(
         [hashtable]$EnvMap,
@@ -140,6 +198,67 @@ function Get-InstallDbPath {
     return $null
 }
 
+function ConvertTo-SqlLiteral {
+    param([AllowNull()][string]$Value)
+    if ($null -eq $Value) { return 'NULL' }
+    if ($Value.IndexOf([char]0) -ge 0) { throw 'SQL values may not contain NUL bytes.' }
+    # MariaDB accepts doubled quotes; doubled backslashes prevent a value from
+    # accidentally turning the following character into an escape sequence.
+    return "'" + $Value.Replace('\', '\\').Replace("'", "''") + "'"
+}
+
+function ConvertTo-SqlIdentifier {
+    param([Parameter(Mandatory)][string]$Value)
+    if ($Value.IndexOf([char]0) -ge 0) { throw 'SQL identifiers may not contain NUL bytes.' }
+    return '`' + $Value.Replace('`', '``') + '`'
+}
+
+function New-MysqlDefaultsExtraFile {
+    param(
+        [string]$User = 'root',
+        [string]$Password = '',
+        [string]$ClientHost = '127.0.0.1',
+        [int]$Port = 3307
+    )
+
+    $dir = Join-Path $script:RepoRoot 'data\mysql-tmp'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $path = Join-Path $dir ('.mysql-client-' + [guid]::NewGuid().ToString('N') + '.cnf')
+    # Double quotes and backslashes are understood by the MariaDB option file
+    # parser. Keep the secret in this short-lived file rather than argv.
+    $quotedPassword = $Password.Replace('\', '\\').Replace('"', '\"')
+    $quotedUser = $User.Replace('\', '\\').Replace('"', '\"')
+    $quotedHost = $ClientHost.Replace('\', '\\').Replace('"', '\"')
+    $text = "[client]`r`nuser=`"$quotedUser`"`r`npassword=`"$quotedPassword`"`r`nhost=`"$quotedHost`"`r`nport=$Port`r`n"
+    Set-Content -LiteralPath $path -Value $text -NoNewline -Encoding ASCII
+
+    # On Windows, make the file private to the current account. Set-Acl is not
+    # available in every PowerShell host, so cleanup remains the final guard.
+    try {
+        $acl = Get-Acl -LiteralPath $path
+        $acl.SetAccessRuleProtection($true, $false)
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $rule = New-Object -TypeName Security.AccessControl.FileSystemAccessRule -ArgumentList @(
+            $identity, 'FullControl', 'Allow')
+        $acl.SetAccessRule($rule)
+        Set-Acl -LiteralPath $path -AclObject $acl
+    }
+    catch {
+        # Non-Windows PowerShell or restricted ACL providers: the file is still
+        # deleted in the caller's finally block.
+    }
+    return $path
+}
+
+function Remove-MysqlDefaultsExtraFile {
+    param([string[]]$ArgumentList)
+    foreach ($arg in @($ArgumentList)) {
+        if ($arg -match '^--defaults-extra-file=(.+)$') {
+            Remove-Item -LiteralPath $Matches[1] -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Test-MysqlDatadirInitialized {
     param([string]$DataDir)
     return Test-Path (Join-Path $DataDir 'mysql')
@@ -170,21 +289,60 @@ function Initialize-MysqlDatadir {
 
     Clear-MysqlDatadirForFreshInit -DataDir $DataDir
 
+    $initialized = $false
     $installDb = Get-InstallDbPath -BinDir $BinDir
     if ($installDb) {
         $args = @("--datadir=$DataDir", "--port=$Port")
-        if ($RootPassword) { $args += "--password=$RootPassword" }
+        # The Windows install utility only accepts --password on argv. Create
+        # an empty local root account, then set a requested password over stdin
+        # after the server starts instead.
         & $installDb @args
-        if ($LASTEXITCODE -eq 0) { return }
-        Write-Warning "mariadb-install-db failed ($LASTEXITCODE), falling back to --initialize-insecure"
-        Clear-MysqlDatadirForFreshInit -DataDir $DataDir
+        $initExit = $LASTEXITCODE
+        if ($initExit -eq 0) {
+            $initialized = $true
+        }
+        else {
+            Write-Warning "mariadb-install-db failed ($initExit), falling back to --initialize-insecure"
+            Clear-MysqlDatadirForFreshInit -DataDir $DataDir
+        }
     }
     else {
         Write-Host "no mariadb-install-db, falling back to --initialize-insecure"
     }
 
-    & $Mysqld --defaults-file="$DefaultsFile" --initialize-insecure
-    if ($LASTEXITCODE -ne 0) { throw "mysqld --initialize-insecure failed ($LASTEXITCODE)" }
+    if (-not $initialized) {
+        & $Mysqld --defaults-file="$DefaultsFile" --initialize-insecure
+        if ($LASTEXITCODE -ne 0) { throw "mysqld --initialize-insecure failed ($LASTEXITCODE)" }
+    }
+
+    if ($RootPassword) {
+        $client = Get-MysqlClientPath -BinDir $BinDir
+        Write-Host 'setting the initial root password'
+        $bootstrap = Start-Process -FilePath $Mysqld -ArgumentList "--defaults-file=$DefaultsFile" -PassThru -WindowStyle Minimized
+        try {
+            Wait-MysqlReady -Client $client -User 'root' -Password '' -Port $Port -BinDir $BinDir -DefaultsFile $DefaultsFile -TimeoutSec 90
+            $passwordSql = ConvertTo-SqlLiteral $RootPassword
+            Invoke-Mysql -Client $client -User 'root' -Password '' -Port $Port -BinDir $BinDir -DefaultsFile $DefaultsFile -Execute @"
+ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY $passwordSql;
+ALTER USER IF EXISTS 'root'@'127.0.0.1' IDENTIFIED BY $passwordSql;
+FLUSH PRIVILEGES;
+"@
+            if (-not (Test-MysqlReady -Client $client -User 'root' -Password $RootPassword -Port $Port -BinDir $BinDir -DefaultsFile $DefaultsFile)) {
+                throw 'Root password was set but could not be verified over the portable MySQL connection.'
+            }
+        }
+        finally {
+            if (-not $bootstrap.HasExited) {
+                try {
+                    Invoke-Mysql -Client $client -User 'root' -Password $RootPassword -Port $Port -BinDir $BinDir -DefaultsFile $DefaultsFile -Execute 'SHUTDOWN;'
+                    $bootstrap.WaitForExit(30000) | Out-Null
+                }
+                catch {
+                    Stop-Process -Id $bootstrap.Id -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
 }
 
 function Get-MysqlClientPluginDir {
@@ -205,7 +363,14 @@ function Build-MysqlClientArgs {
     )
 
     $args = @()
-    if ($DefaultsFile -and (Test-Path $DefaultsFile)) {
+    if ($Password) {
+        $credentialFile = New-MysqlDefaultsExtraFile -User $User -Password $Password -Port $Port
+        # MariaDB requires option-file switches to be the first argument. The
+        # generated file contains every client setting we need, so do not mix
+        # --defaults-file and --defaults-extra-file.
+        $args += "--defaults-extra-file=$credentialFile"
+    }
+    elseif ($DefaultsFile -and (Test-Path $DefaultsFile)) {
         $args += "--defaults-file=$DefaultsFile"
     }
     if ($BinDir) {
@@ -214,12 +379,7 @@ function Build-MysqlClientArgs {
             $args += "--plugin-dir=$pluginDir"
         }
     }
-    if ($Password) {
-        $args += @("-u$user", "-p$Password", "-h127.0.0.1", "-P$Port")
-    }
-    else {
-        $args += @("-u$user", "-h127.0.0.1", "-P$Port")
-    }
+    $args += @("-u$user", "-h127.0.0.1", "-P$Port")
     if ($Extra) { $args += $Extra }
     return $args
 }
@@ -250,6 +410,85 @@ function Get-ListeningProcessForPort {
     }
     catch {
         return $null
+    }
+}
+
+function Resolve-ProcessExecutablePath {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    return [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path).Path).TrimEnd('\').ToLowerInvariant()
+}
+
+function Get-PortableProcessesByPath {
+    param([Parameter(Mandatory)][string]$ExecutablePath)
+    $expected = Resolve-ProcessExecutablePath -Path $ExecutablePath
+    if (-not $expected) { return @() }
+    $name = Split-Path -Leaf $ExecutablePath
+    $found = @()
+    try {
+        $found = @(Get-CimInstance Win32_Process -Filter "Name='$name'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.ExecutablePath -and
+                (Resolve-ProcessExecutablePath -Path ([string]$_.ExecutablePath)) -eq $expected
+            })
+    }
+    catch { $found = @() }
+    return $found
+}
+
+function Get-PortablePidFilePath {
+    param([Parameter(Mandatory)][string]$ProcessName)
+    return Join-Path $script:RepoRoot ("data\$ProcessName.pid")
+}
+
+function Read-PortablePid {
+    param([Parameter(Mandatory)][string]$ProcessName)
+    $file = Get-PortablePidFilePath -ProcessName $ProcessName
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    $content = Get-Content -LiteralPath $file -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $content) { return $null }
+    $raw = $content.Trim()
+    $parsedPid = 0
+    if ([int]::TryParse($raw, [ref]$parsedPid) -and $parsedPid -gt 0) { return $parsedPid }
+    return $null
+}
+
+function Write-PortablePid {
+    param([Parameter(Mandatory)][string]$ProcessName, [Parameter(Mandatory)][int]$ProcessId)
+    $file = Get-PortablePidFilePath -ProcessName $ProcessName
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file) | Out-Null
+    Set-Content -LiteralPath $file -Value $ProcessId -Encoding ASCII
+}
+
+function Remove-PortablePid {
+    param([Parameter(Mandatory)][string]$ProcessName)
+    Remove-Item -LiteralPath (Get-PortablePidFilePath -ProcessName $ProcessName) -Force -ErrorAction SilentlyContinue
+}
+
+function Test-PortableProcessId {
+    param([int]$ProcessId, [Parameter(Mandatory)][string]$ExecutablePath)
+    if ($ProcessId -le 0) { return $false }
+    $expected = Resolve-ProcessExecutablePath -Path $ExecutablePath
+    if (-not $expected) { return $false }
+    try {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+        return ($process -and $process.ExecutablePath -and
+            (Resolve-ProcessExecutablePath -Path ([string]$process.ExecutablePath)) -eq $expected)
+    }
+    catch { return $false }
+}
+
+function Assert-PortableMapsPresent {
+    param([string]$MapsDir = (Join-Path $script:RepoRoot 'maps'))
+    foreach ($name in @('dbc', 'maps', 'vmaps', 'mmaps')) {
+        $path = Join-Path $MapsDir $name
+        if (-not (Test-Path -LiteralPath $path -PathType Container)) {
+            throw "Missing maps\$name. Run setup without -SkipDownload or provide the four client-data directories."
+        }
+        $items = Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if (-not $items) {
+            throw "maps\$name is empty. Setup requires dbc, maps, vmaps, and mmaps to contain data."
+        }
     }
 }
 
@@ -288,14 +527,15 @@ function Test-MysqlReady {
         [string]$DefaultsFile = ''
     )
 
-    $args = Build-MysqlClientArgs -BinDir $BinDir -DefaultsFile $DefaultsFile -User $User -Password $Password -Port $Port -Extra @('-e', 'SELECT 1;')
+    $args = Build-MysqlClientArgs -BinDir $BinDir -DefaultsFile $DefaultsFile -User $User -Password $Password -Port $Port
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
     try {
-        & $Client @args 2>$null | Out-Null
+        'SELECT 1;' | & $Client @args 2>$null | Out-Null
         return ($LASTEXITCODE -eq 0)
     }
     finally {
+        Remove-MysqlDefaultsExtraFile -ArgumentList $args
         $ErrorActionPreference = $prevEap
     }
 }
@@ -330,26 +570,70 @@ function Invoke-Mysql {
         [string]$Execute = '',
         [string]$InputFile = '',
         [switch]$Force,
+        [switch]$CaptureOutput,
         [string]$BinDir = '',
         [string]$DefaultsFile = ''
     )
     $extra = @()
-    if ($Execute) { $extra += @('-e', $Execute) }
     $args = Build-MysqlClientArgs -BinDir $BinDir -DefaultsFile $DefaultsFile -User $User -Password $Password -Port $Port -Extra $extra
     if ($Force) { $args += '--force' }
     if ($Database) { $args += $Database }
-    if ($Execute) {
-        & $Client @args
+    try {
+        if ($Execute) {
+            # SQL can contain passwords and realm settings; stdin keeps it out
+            # of the process command line as well.
+            $output = @($Execute | & $Client @args)
+        }
+        elseif ($InputFile) {
+            $output = @(Get-Content -LiteralPath $InputFile -Raw | & $Client @args)
+        }
+        else {
+            throw 'Invoke-Mysql requires -Execute or -InputFile'
+        }
+        $exitCode = $LASTEXITCODE
+        if ($output) { $output }
+        if ($exitCode -ne 0 -and -not $Force) {
+            throw "mysql failed (exit $exitCode)"
+        }
     }
-    elseif ($InputFile) {
-        Get-Content -LiteralPath $InputFile -Raw | & $Client @args
+    finally {
+        Remove-MysqlDefaultsExtraFile -ArgumentList $args
     }
-    else {
-        throw 'Invoke-Mysql requires -Execute or -InputFile'
-    }
-    if ($LASTEXITCODE -ne 0 -and -not $Force) {
-        throw "mysql failed (exit $LASTEXITCODE)"
-    }
+}
+
+function Ensure-PortableDatabaseUser {
+    param(
+        [string]$Client,
+        [string]$BinDir,
+        [string]$DefaultsFile,
+        [string]$RootUser,
+        [string]$RootPass,
+        [int]$Port,
+        [Parameter(Mandatory = $true)][string]$User,
+        [string]$Password = ''
+    )
+
+    # setup.ps1 runs this on every config apply. CREATE USER IF NOT EXISTS is
+    # intentionally not enough: changing MYSQL_PASSWORD otherwise rewrites the
+    # server confs while leaving the database account on its old password.
+    $userSql = ConvertTo-SqlLiteral $User
+    $passSql = ConvertTo-SqlLiteral $Password
+    $sql = @"
+CREATE USER IF NOT EXISTS $userSql@'localhost' IDENTIFIED BY $passSql;
+CREATE USER IF NOT EXISTS $userSql@'127.0.0.1' IDENTIFIED BY $passSql;
+ALTER USER $userSql@'localhost' IDENTIFIED BY $passSql;
+ALTER USER $userSql@'127.0.0.1' IDENTIFIED BY $passSql;
+GRANT ALL PRIVILEGES ON tw_char.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_logon.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_world.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_logs.* TO $userSql@'localhost';
+GRANT ALL PRIVILEGES ON tw_char.* TO $userSql@'127.0.0.1';
+GRANT ALL PRIVILEGES ON tw_logon.* TO $userSql@'127.0.0.1';
+GRANT ALL PRIVILEGES ON tw_world.* TO $userSql@'127.0.0.1';
+GRANT ALL PRIVILEGES ON tw_logs.* TO $userSql@'127.0.0.1';
+FLUSH PRIVILEGES;
+"@
+    Invoke-Mysql -Client $Client -User $RootUser -Password $RootPass -Port $Port -BinDir $BinDir -DefaultsFile $DefaultsFile -Execute $sql
 }
 
 function Get-FileSha1Hex {
@@ -400,6 +684,11 @@ function Patch-ConfDatabaseLines {
         [string]$Password
     )
     if (-not (Test-Path $Path)) { throw "Missing conf: $Path" }
+    foreach ($part in @(@{ Name = 'MYSQL_USER'; Value = $User }, @{ Name = 'MYSQL_PASSWORD'; Value = $Password })) {
+        if ($part.Value -match '[;"\r\n]') {
+            throw "$($part.Name) cannot contain semicolons, double quotes, or line breaks because server database settings are semicolon-delimited."
+        }
+    }
     $content = Get-Content -LiteralPath $Path -Raw
     $info = "`"$DbHost;$Port;$User;$Password"
     $replacements = @{

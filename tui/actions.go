@@ -5,6 +5,7 @@ type action struct {
 	Group      string
 	Title      string
 	Desc       string
+	Key        string
 	Danger     bool
 	Confirm    string
 	Script     string
@@ -30,14 +31,17 @@ var menu = []action{
 		Desc:   "Bring up MySQL, realmd, and mangosd",
 		Script: "start.ps1",
 		Disable: func(s Status) string {
-			if s.Mangosd {
-				return "mangosd is already running"
+			if s.Realmd || s.Mangosd {
+				return "realm daemon is already running — use Restart realm"
 			}
 			if !s.HasServer {
 				return "no server binaries — run Full setup"
 			}
 			if !s.HasConf {
 				return "no confs — run Full setup"
+			}
+			if !s.HasMapsAll {
+				return "maps are incomplete — run Fetch maps"
 			}
 			return ""
 		},
@@ -51,6 +55,47 @@ var menu = []action{
 		Disable: func(s Status) string {
 			if !s.Mysqld && !s.Realmd && !s.Mangosd {
 				return "nothing is running"
+			}
+			return ""
+		},
+	},
+	{
+		ID:        "restart",
+		Group:     "Realm",
+		Title:     "Restart realm",
+		Desc:      "Stop everything, then start MySQL, realmd, and mangosd",
+		Script:    "start.ps1",
+		NeedsStop: true,
+		Confirm:   "Stop the realm, then start it again?",
+		Disable: func(s Status) string {
+			if !s.Mysqld && !s.Realmd && !s.Mangosd {
+				return "nothing is running — use Start realm"
+			}
+			if !s.HasServer {
+				return "no server binaries — run Full setup"
+			}
+			if !s.HasConf {
+				return "no confs — run Full setup"
+			}
+			if !s.HasMapsAll {
+				return "maps are incomplete — run Fetch maps"
+			}
+			return ""
+		},
+	},
+	{
+		ID:      "account",
+		Group:   "Realm",
+		Title:   "Create account",
+		Desc:    "Add or reset a login in tw_logon (same hash as account create)",
+		Key:     "a",
+		Builtin: "account",
+		Disable: func(s Status) string {
+			if !s.HasMariaDB {
+				return "MariaDB is missing — run Full setup"
+			}
+			if !s.SetupComplete {
+				return "databases not imported yet — run Full setup"
 			}
 			return ""
 		},
@@ -88,18 +133,32 @@ var menu = []action{
 		ID:        "setup",
 		Group:     "Install",
 		Title:     "Full setup",
-		Desc:      "Download MariaDB, server, SQL — import DB — write confs",
+		Desc:      "Download MariaDB, server, SQL, maps — import DB — write confs",
 		Script:    "setup.ps1",
 		NeedsStop: true,
-		Confirm:   "Stops the realm if it is running, then downloads anything still missing, imports the databases if needed, and writes server confs.\n\nMaps are not downloaded — put Turtle 1.18.1 data in maps\\ yourself.",
+		Confirm:   "Stops the realm if it is running, then downloads anything still missing (server, SQL, MariaDB, and maps if a zip URL is set), imports the databases if needed, and writes server confs.",
 	},
 	{
 		ID:      "update",
 		Group:   "Install",
 		Title:   "Update from GitHub",
 		Desc:    "Latest server + SQL release; keeps characters; rewrites confs",
+		Key:     "u",
 		Script:  "update.ps1",
 		Confirm: "Stops the realm, downloads the latest tortoise-wow Windows server and SQL zips, and rewrites confs from the new dist files.\n\nDatabases are kept. Use Reimport if you want a clean SQL reload.",
+	},
+	{
+		ID:     "fetch-maps",
+		Group:  "Install",
+		Title:  "Fetch maps",
+		Desc:   "Download dbc/maps/vmaps/mmaps from conf/maps-url.txt (refreshed from GitHub)",
+		Script: "fetch-maps.ps1",
+		Disable: func(s Status) string {
+			if !s.MapsUrlSet {
+				return "no maps URL in conf/maps-url.txt"
+			}
+			return ""
+		},
 	},
 	{
 		ID:     "fetch-mariadb",
@@ -163,6 +222,7 @@ var menu = []action{
 		Group:   "Config",
 		Title:   "Settings",
 		Desc:    "Ports, bots, realm name, release pin — writes portable.local.env",
+		Key:     "s",
 		Builtin: "settings",
 	},
 	{
@@ -184,6 +244,7 @@ var menu = []action{
 		Group:   "Config",
 		Title:   "Quit",
 		Desc:    "Leave the installer (does not stop the realm)",
+		Key:     "q",
 		Builtin: "quit",
 	},
 }
@@ -191,6 +252,15 @@ var menu = []action{
 func menuIndex(id string) int {
 	for i, a := range menu {
 		if a.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func menuIndexByKey(k string) int {
+	for i, a := range menu {
+		if a.Key == k {
 			return i
 		}
 	}

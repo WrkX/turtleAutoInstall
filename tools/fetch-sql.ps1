@@ -15,7 +15,7 @@ New-Item -ItemType Directory -Force -Path $cache | Out-Null
 
 if ((Test-Path $haveSql) -and -not $Force) {
     Write-Host "SQL already at $sqlDir"
-    exit 0
+    return
 }
 
 $asset = Resolve-TortoiseWowReleaseAsset -EnvMap $envMap `
@@ -26,29 +26,60 @@ $asset = Resolve-TortoiseWowReleaseAsset -EnvMap $envMap `
 
 $zipPath = Join-Path $cache $asset.Name
 
-if (-not (Test-Path $zipPath)) {
+if ($Force -or -not (Test-Path $zipPath)) {
     Write-Host "Downloading $($asset.Url)"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $asset.Url -OutFile $zipPath
-}
-elseif ($Force) {
-    Write-Host "Using cached $($asset.Name)"
+    Save-DownloadFileAtomic -Url $asset.Url -OutFile $zipPath
 }
 
 Write-Host "Unpacking into sql\..."
 $extract = Join-Path $cache 'sql-extract'
+$backup = Join-Path $cache ("sql-backup-" + [guid]::NewGuid().ToString('N'))
 if (Test-Path $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $extract | Out-Null
-Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
-
-$srcSql = Join-Path $extract 'sql'
-if (-not (Test-Path (Join-Path $srcSql 'create_databases.sql'))) {
-    throw 'Unpack finished but sql\create_databases.sql is missing - bad zip layout?'
+$hadOldSql = $false
+$newSqlMoved = $false
+$keepBackup = $false
+try {
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
+    $srcSql = Join-Path $extract 'sql'
+    if (-not (Test-Path (Join-Path $srcSql 'create_databases.sql'))) {
+        throw 'Unpack finished but sql\create_databases.sql is missing - bad zip layout?'
+    }
+    # Keep the current checkout until the replacement has been validated and
+    # moved successfully. A corrupt/partial update must not strand setup with
+    # no SQL at all.
+    if (Test-Path $sqlDir) {
+        Move-Item -LiteralPath $sqlDir -Destination $backup
+        $hadOldSql = $true
+    }
+    Move-Item -LiteralPath $srcSql -Destination $sqlDir
+    $newSqlMoved = $true
 }
-
-if (Test-Path $sqlDir) { Remove-Item -LiteralPath $sqlDir -Recurse -Force }
-Move-Item -LiteralPath $srcSql -Destination $sqlDir
-Remove-Item -LiteralPath $extract -Recurse -Force
+catch {
+    if ($newSqlMoved -and (Test-Path $sqlDir)) {
+        Remove-Item -LiteralPath $sqlDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($hadOldSql -and (Test-Path $backup)) {
+        try {
+            Move-Item -LiteralPath $backup -Destination $sqlDir -Force -ErrorAction Stop
+        }
+        catch {
+            $keepBackup = $true
+            Write-Warning "could not restore previous SQL tree: $_"
+        }
+    }
+    if ($keepBackup) {
+        Write-Warning "rollback was incomplete; preserving backup at $backup"
+    }
+    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    throw
+}
+finally {
+    Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not $keepBackup) {
+        Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
 
 $dataDir = Join-Path $root 'data'
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null

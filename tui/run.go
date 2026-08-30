@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,7 @@ type scriptStep struct {
 	Label  string
 	Script string
 	Args   []string
+	Env    map[string]string
 }
 
 type lineMsg string
@@ -51,8 +54,15 @@ func runScriptCmd(root, script string, args []string) *exec.Cmd {
 }
 
 func startStream(root, script string, args []string) tea.Cmd {
+	return startStreamEnv(root, script, args, nil)
+}
+
+func startStreamEnv(root, script string, args []string, extraEnv map[string]string) tea.Cmd {
 	return func() tea.Msg {
 		cmd := runScriptCmd(root, script, args)
+		if len(extraEnv) > 0 {
+			cmd.Env = childEnv(extraEnv)
+		}
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -70,8 +80,9 @@ func startStream(root, script string, args []string) tea.Cmd {
 		done := make(chan error, 1)
 		cancel := sync.OnceFunc(func() {
 			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
+				killProcessTree(cmd)
 			}
+			cleanupPartialArtifacts(root)
 		})
 
 		var wg sync.WaitGroup
@@ -94,6 +105,77 @@ func startStream(root, script string, args []string) tea.Cmd {
 		}()
 
 		return streamStartedMsg{lines: lines, done: done, cancel: cancel}
+	}
+}
+
+func childEnv(extra map[string]string) []string {
+	// Keep credentials/hash material scoped to the PowerShell child. Replacing
+	// an existing key also avoids duplicate environment entries on Windows.
+	env := make([]string, 0, len(os.Environ())+len(extra))
+	for _, item := range os.Environ() {
+		key, _, ok := strings.Cut(item, "=")
+		if !ok {
+			env = append(env, item)
+			continue
+		}
+		keep := true
+		for name := range extra {
+			if strings.EqualFold(key, name) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			env = append(env, item)
+		}
+	}
+	for key, value := range extra {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func killProcessTree(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		// PowerShell starts curl/mysqld descendants; Process.Kill only kills
+		// pwsh, leaving those descendants orphaned. taskkill /T covers the tree.
+		if err := exec.Command("taskkill", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F").Run(); err == nil {
+			return
+		}
+	}
+	_ = cmd.Process.Kill()
+}
+
+func cleanupPartialArtifacts(root string) {
+	cache := filepath.Join(root, "tools", ".cache")
+	entries, err := os.ReadDir(cache)
+	if err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			remove := strings.HasSuffix(name, ".partial") ||
+				strings.HasSuffix(name, ".download") ||
+				(strings.HasPrefix(name, "maps-url.txt.") && strings.HasSuffix(name, ".tmp")) ||
+				name == "maps-extract" || name == "server-extract" ||
+				name == "sql-extract" || strings.HasPrefix(name, "extract-")
+			if remove {
+				_ = os.RemoveAll(filepath.Join(cache, name))
+			}
+		}
+	}
+
+	credentialDir := filepath.Join(root, "data", "mysql-tmp")
+	credentialEntries, err := os.ReadDir(credentialDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range credentialEntries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".mysql-client-") && strings.HasSuffix(name, ".cnf") {
+			_ = os.Remove(filepath.Join(credentialDir, name))
+		}
 	}
 }
 

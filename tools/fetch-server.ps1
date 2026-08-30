@@ -12,9 +12,10 @@ $marker = Join-Path $root 'data\.server-release'
 
 New-Item -ItemType Directory -Force -Path $cache, $serverDir | Out-Null
 
-if ((Test-Path (Join-Path $serverDir 'mangosd.exe')) -and -not $Force) {
+if ((Test-Path (Join-Path $serverDir 'mangosd.exe')) -and
+    (Test-Path (Join-Path $serverDir 'realmd.exe')) -and -not $Force) {
     Write-Host "Server already at $serverDir"
-    exit 0
+    return
 }
 
 $asset = Resolve-TortoiseWowReleaseAsset -EnvMap $envMap `
@@ -25,26 +26,73 @@ $asset = Resolve-TortoiseWowReleaseAsset -EnvMap $envMap `
 
 $zipPath = Join-Path $cache $asset.Name
 
-if (-not (Test-Path $zipPath)) {
+if ($Force -or -not (Test-Path $zipPath)) {
     Write-Host "Downloading $($asset.Url)"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $asset.Url -OutFile $zipPath
-}
-elseif ($Force) {
-    Write-Host "Using cached $($asset.Name)"
+    Save-DownloadFileAtomic -Url $asset.Url -OutFile $zipPath
 }
 
 Write-Host "Unpacking into server\..."
 $extract = Join-Path $cache 'server-extract'
+$backup = Join-Path $cache ("server-backup-" + [guid]::NewGuid().ToString('N'))
 if (Test-Path $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $extract | Out-Null
-Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
-
-Get-ChildItem -LiteralPath $extract -File | Move-Item -Destination $serverDir -Force
-Remove-Item -LiteralPath $extract -Recurse -Force
-
-if (-not (Test-Path (Join-Path $serverDir 'mangosd.exe'))) {
-    throw 'Unpack finished but server\mangosd.exe is missing.'
+$backedUp = @()
+$installed = @()
+$keepBackup = $false
+try {
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
+    $files = @(Get-ChildItem -LiteralPath $extract -File)
+    foreach ($requiredExe in @('mangosd.exe', 'realmd.exe')) {
+        if (-not ($files | Where-Object { $_.Name -ieq $requiredExe })) {
+            throw "Unpack finished but the archive has no $requiredExe at its top level."
+        }
+    }
+    New-Item -ItemType Directory -Force -Path $backup | Out-Null
+    foreach ($file in $files) {
+        $destination = Join-Path $serverDir $file.Name
+        if (Test-Path $destination) {
+            Move-Item -LiteralPath $destination -Destination (Join-Path $backup $file.Name)
+            $backedUp += $file.Name
+        }
+    }
+    foreach ($file in $files) {
+        Move-Item -LiteralPath $file.FullName -Destination (Join-Path $serverDir $file.Name)
+        $installed += $file.Name
+    }
+    foreach ($requiredExe in @('mangosd.exe', 'realmd.exe')) {
+        if (-not (Test-Path (Join-Path $serverDir $requiredExe))) {
+            throw "Unpack finished but server\$requiredExe is missing."
+        }
+    }
+}
+catch {
+    foreach ($name in @($installed)) {
+        $destination = Join-Path $serverDir $name
+        if (Test-Path $destination) { Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue }
+    }
+    foreach ($name in @($backedUp)) {
+        $old = Join-Path $backup $name
+        if (Test-Path $old) {
+            try {
+                Move-Item -LiteralPath $old -Destination (Join-Path $serverDir $name) -Force -ErrorAction Stop
+            }
+            catch {
+                $keepBackup = $true
+                Write-Warning "could not restore server\$name from rollback backup: $_"
+            }
+        }
+    }
+    if ($keepBackup) {
+        Write-Warning "rollback was incomplete; preserving backup at $backup"
+    }
+    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    throw
+}
+finally {
+    Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not $keepBackup) {
+        Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $dataDir = Join-Path $root 'data'

@@ -17,12 +17,28 @@ Assert-PortableMysqlPortAvailable -Port $port -MysqldPath $mysqld
 
 if (Test-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni) {
     Write-Host "mysqld already up on $port"
-    exit 0
+    return
 }
 
-$pidFile = Join-Path $root 'data\mysqld.pid'
+$listener = Get-ListeningProcessForPort -Port $port
+if ($listener -and (Test-PortableProcessId -ProcessId ([int]$listener.ProcessId) -ExecutablePath $mysqld)) {
+    throw "portable mysqld is already listening on $port but rejected the configured credentials; check MYSQL_ROOT_USER/MYSQL_ROOT_PASSWORD"
+}
+
 Write-Host "starting mysqld"
 $proc = Start-Process -FilePath $mysqld -ArgumentList "--defaults-file=$myIni" -PassThru -WindowStyle Minimized
-Set-Content -LiteralPath $pidFile -Value $proc.Id -Encoding ASCII
-Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -TimeoutSec 90
+Write-PortablePid -ProcessName 'mysqld' -ProcessId $proc.Id
+try {
+    Wait-MysqlReady -Client $client -User $rootUser -Password $rootPass -Port $port -BinDir $bin -DefaultsFile $myIni -TimeoutSec 90
+}
+catch {
+    # Do not leave a broken daemon (or a PID file pointing at it) behind when
+    # authentication/configuration prevents startup from becoming ready.
+    if (Test-PortableProcessId -ProcessId $proc.Id -ExecutablePath $mysqld) {
+        Write-Warning "mysqld did not become ready; stopping pid $($proc.Id)"
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+    Remove-PortablePid -ProcessName 'mysqld'
+    throw
+}
 Write-Host "mysqld pid $($proc.Id)"
