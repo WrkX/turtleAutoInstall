@@ -71,7 +71,7 @@ $hashSql = ConvertTo-SqlLiteral $hash
 
 $colsRaw = Invoke-MysqlQuiet "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='tw_logon' AND TABLE_NAME='account'"
 if (-not $colsRaw) {
-    throw 'tw_logon.account not found — run Full setup first'
+    throw 'tw_logon.account not found - run Full setup first'
 }
 $colSet = @{}
 foreach ($line in ($colsRaw -split '\r?\n')) {

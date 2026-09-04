@@ -30,7 +30,7 @@ function Get-DatanodesDirectUrl {
         key       = $Key
     }
     if (-not $resp -or [int]$resp.status -ne 200 -or -not $resp.result.url) {
-        throw "DataNodes direct_link failed. Free page links need a wait/captcha — use the API key from your account, or host a raw .zip URL instead."
+        throw "DataNodes direct_link failed. Free page links need a wait/captcha - use the API key from your account, or host a raw .zip URL instead."
     }
     return [string]$resp.result.url
 }
@@ -98,13 +98,11 @@ function Resolve-MapsZipUrl {
 
     if ($override) { return $override }
 
+    $url = Read-MapsUrlFile $committed
+    if ($url) { return $url }
+
     Update-CachedMapsUrlFile -Remote $remote -Dest $cached
-    $url = Read-MapsUrlFile $cached
-    if (-not $url) { $url = Read-MapsUrlFile $committed }
-    if (-not $url) {
-        return ''
-    }
-    return $url
+    return Read-MapsUrlFile $cached
 }
 
 function Get-GoogleDriveFileId {
@@ -159,7 +157,7 @@ function Save-GoogleDriveFile {
             }
         }
 
-        Write-Host "Drive served a confirm page (usual for big zips) — retrying with token"
+        Write-Host "Drive served a confirm page (usual for big zips) - retrying with token"
         $scan = "https://drive.google.com/uc?export=download&id=$FileId"
         Save-HttpFile -Url $scan -OutFile $candidateFile -UserAgent $ua -CookieJar $jar
         if (Test-FileLooksLikeZip $candidateFile) {
@@ -178,7 +176,7 @@ function Save-GoogleDriveFile {
         Write-Host "Trying $final"
         Save-HttpFile -Url $final -OutFile $candidateFile -UserAgent $ua -CookieJar $jar
         if (-not (Test-FileLooksLikeZip $candidateFile)) {
-            throw 'Google Drive did not return a zip. Share as "Anyone with the link can view". Large files sometimes still hit a virus-scan page that blocks scripts — if this keeps failing, split the zip or use R2.'
+            throw 'Google Drive did not return a zip. Share as "Anyone with the link can view". Large files sometimes still hit a virus-scan page that blocks scripts - if this keeps failing, split the zip or use R2.'
         }
         Move-Item -LiteralPath $candidateFile -Destination $OutFile -Force
     }
@@ -245,7 +243,7 @@ $configuredOverride = Get-EnvValue $envMap 'TORTOISE_WOW_MAPS_ZIP_URL' ''
 $configuredCode = Get-EnvValue $envMap 'DATANODES_FILE_CODE' ''
 $url = Resolve-MapsZipUrl
 if (-not $url) {
-    Write-Host 'no maps URL in conf\maps-url.txt (or GitHub copy) — skip. Put a direct https zip there, or TORTOISE_WOW_MAPS_ZIP_URL in portable.local.env.'
+    Write-Host 'no maps URL in conf\maps-url.txt (or GitHub copy) - skip. Put a direct https zip there, or TORTOISE_WOW_MAPS_ZIP_URL in portable.local.env.'
     return
 }
 $sourceIdentity = $url

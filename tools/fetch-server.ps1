@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Force -Path $cache, $serverDir | Out-Null
 
 if ((Test-Path (Join-Path $serverDir 'mangosd.exe')) -and
     (Test-Path (Join-Path $serverDir 'realmd.exe')) -and -not $Force) {
-    Write-Host "Server already at $serverDir"
+    Write-Host "Server already at $serverDir (pass -Force to replace from GitHub)"
     return
 }
 

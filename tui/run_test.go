@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +87,49 @@ func TestPlanStepsStartsMySQLBeforeImport(t *testing.T) {
 	}
 }
 
+func TestLiveTUIGithubUpdate(t *testing.T) {
+	if os.Getenv("LIVE_GITHUB_UPDATE") != "1" {
+		t.Skip("set LIVE_GITHUB_UPDATE=1 to run update.ps1 through the TUI stream")
+	}
+	root, err := bootstrapRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg := startStreamEnv(root, "update.ps1", nil, nil)()
+	started, ok := msg.(streamStartedMsg)
+	if !ok {
+		if d, yes := msg.(doneMsg); yes {
+			t.Fatalf("update.ps1 did not start: %v", d.err)
+		}
+		t.Fatalf("unexpected start message %T %#v", msg, msg)
+	}
+
+	var tm tea.Model = newModel(root)
+	for line := range started.lines {
+		t.Log(line)
+		tm, _ = tm.Update(lineMsg(line))
+	}
+	waitErr := <-started.done
+	tm, _ = tm.Update(doneMsg{err: waitErr})
+	got := tm.(*model)
+	if waitErr != nil {
+		t.Fatalf("update.ps1 failed: %v\nlog:\n%s", waitErr, got.log.String())
+	}
+}
+
+func TestRunLogSurvivesStreamAndDone(t *testing.T) {
+	var tm tea.Model = newModel(t.TempDir())
+	tm, _ = tm.Update(lineMsg("Resolving server zip from WrkX/tortoise-wow"))
+	tm, _ = tm.Update(lineMsg("Downloading https://github.com/example/server.zip"))
+	tm, _ = tm.Update(doneMsg{err: errors.New("exit status 1")})
+	got := tm.(*model)
+	log := got.log.String()
+	if !strings.Contains(log, "error: exit status 1") {
+		t.Fatalf("expected error line in log, got %q", log)
+	}
+}
+
 func TestPlanStepsDoesNotAddStopForUpdate(t *testing.T) {
 	a := menu[menuIndex("update")]
 	m := model{status: Status{Mysqld: true, Realmd: true, Mangosd: true}}
@@ -113,11 +157,28 @@ func TestMenuIDsAndShortcutsAreUnique(t *testing.T) {
 }
 
 func TestNumberKeyActivatesMenuItem(t *testing.T) {
-	m := model{status: Status{}}
+	m := &model{status: Status{}}
 	updated, _ := m.onHomeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
-	got := updated.(model)
+	got := updated.(*model)
 	if got.flash == "" {
 		t.Fatal("number key selected the disabled item without activating it")
+	}
+}
+
+func TestSelectedActionHelpUsesDisableReason(t *testing.T) {
+	m := model{cursor: menuIndex("start"), status: Status{}}
+	got := m.selectedActionHelp(40)
+	if !strings.Contains(got, "no server binaries") {
+		t.Fatalf("expected disable reason on the left, got %q", got)
+	}
+	m.status = Status{HasServer: true, HasConf: true, HasMapsAll: true}
+	got = m.selectedActionHelp(40)
+	if !strings.Contains(got, "Bring up MySQL, realmd, and mangosd") {
+		t.Fatalf("expected action description on the left, got %q", got)
+	}
+	menuBody := m.renderMenu(40, 20)
+	if strings.Contains(menuBody, "Bring up MySQL, realmd, and mangosd") {
+		t.Fatalf("description should not sit under the menu item:\n%s", menuBody)
 	}
 }
 

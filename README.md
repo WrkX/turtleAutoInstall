@@ -1,34 +1,34 @@
 # Tortoise-WoW portable (Windows)
 
-MariaDB lives in this folder next to the server binaries. No system install, no
-Windows service — `start.bat` brings it up, `stop.bat` kills it.
+The usual install is a single `tortoise.exe` from GitHub Releases. Put it in an
+empty folder and run it. On first launch it unpacks the helper scripts and
+default config next to the exe; **Full setup** then downloads MariaDB, the
+[tortoise-wow](https://github.com/WrkX/tortoise-wow) server + SQL zips, and maps
+when `conf/maps-url.txt` has a zip URL.
+
+MariaDB lives in that folder next to the server binaries. No system install, no
+Windows service — **Start realm** brings it up, **Stop realm** kills it.
 
 Client data (`dbc`, `maps`, `vmaps`, `mmaps`) is fetched from the URL in
-`conf/maps-url.txt` (public Google Drive share link or a raw https zip). That
-file is git-tracked; setup/fetch-maps also checks a cached copy refreshed from
-GitHub so a new URL in the repo is used without a git pull. Override with
-`TORTOISE_WOW_MAPS_ZIP_URL` in `portable.local.env`.
-Server binaries and SQL come from the
-[tortoise-wow](https://github.com/WrkX/tortoise-wow) GitHub release
-(`tortoise-wow-windows-server-*.zip` + `tortoise-wow-sql-*.zip`, same tag).
+`conf/maps-url.txt` (public Google Drive share link or a raw https zip).
+Override with `TORTOISE_WOW_MAPS_ZIP_URL` in `portable.local.env`.
 
 ## First run
 
-1. Run `setup.bat` (or `tui.bat` → Full setup). It downloads the latest server +
-   SQL release, MariaDB 10.11, and maps when `conf/maps-url.txt` has a zip URL.
-2. Run `start.bat` (or **Start realm** in the TUI).
-3. Use **Create account** in the TUI, or run the primary account helper and
-   enter the password at its private prompt:
-   `powershell -File tools\create-account.ps1 -Username <name>`.
-   The helper updates an existing account safely and prints the realmlist. The
-   mangosd `account create` console command remains a fallback.
+1. Download `tortoise.exe` from the latest GitHub release into a new folder.
+2. Run it and choose **Full setup**. It downloads the latest server + SQL
+   release, MariaDB 10.11, and maps when `conf/maps-url.txt` has a zip URL.
+3. Choose **Start realm**.
+4. Use **Create account** (`a`). The helper updates an existing account safely
+   and prints the realmlist. The mangosd `account create` console command
+   remains a fallback.
 
-Optional: `tui.bat` opens a Charm/Bubble Tea dashboard (install, update, start/stop,
-database reimport, settings) that shells out to the same `tools\*.ps1` scripts. Build with
-`go build -o tortoise.exe .\tui` (or `GOOS=windows GOARCH=amd64` from Linux).
-Tagged GitHub releases also include a prebuilt `tortoise-wow-tui-windows-amd64.zip`.
-Extract `tortoise.exe` and `tui.bat` into this portable root; `tui.bat` will prefer
-the binary and falls back to `go run` only when it is absent.
+Replacing `tortoise.exe` with a newer release refreshes the bundled scripts.
+Your `portable.local.env`, databases, and maps stay put.
+
+From this git checkout you can still run `tui.bat`, or build with
+`go build -o tortoise.exe ./tui` (set `GOOS=windows` `GOARCH=amd64` from Linux).
+`tui.bat` prefers `tortoise.exe` and falls back to `go run` when it is absent.
 
 Override downloads in `portable.local.env` (copy from `portable.env`):
 `TORTOISE_WOW_RELEASE` to pin a tag like `0.1.1`, direct zip URLs, or
@@ -37,12 +37,14 @@ Same file for ports, bot counts, MariaDB URL, etc.
 
 ## What sits where
 
+After the first launch (the exe writes the files it needs):
+
 ```
-setup.bat  start.bat  stop.bat
-portable.env            defaults
+tortoise.exe            launcher (the only file you download)
+portable.env            defaults (created if missing)
 portable.local.env      your overrides (gitignored)
 conf\my.ini.template
-tools\                  the actual scripts
+tools\                  scripts unpacked from the exe
 mariadb\                filled by setup
 data\mysql\             datadir
 server\                 binaries
@@ -57,7 +59,7 @@ a thousand on first boot just makes you wait.
 
 ## Maps troubleshooting
 
-`setup.bat` requires all four client-data directories (`dbc`, `maps`, `vmaps`,
+`Full setup` requires all four client-data directories (`dbc`, `maps`, `vmaps`,
 and `mmaps`) under `maps\`. Set `TORTOISE_WOW_MAPS_ZIP_URL` in
 `portable.local.env` to override `conf/maps-url.txt`, then run **Fetch maps**.
 If setup stops with a missing-maps error, fix the URL or place the four folders
@@ -83,15 +85,8 @@ at a local single-player realm.
 
 Import follows the same recipe as INSTALL-WINDOWS.md in the source tree
 (`create_databases`, `sql/base`, migrations with `--force` + mark applied,
-playerbot SQL). To wipe and reload:
+playerbot SQL). To wipe and reload, use **Reimport databases** in the TUI
+(or `powershell -File tools\setup.ps1 -ForceReimport`).
 
-```
-powershell -File tools\setup.ps1 -ForceReimport
-```
-
-When you wrap this in an installer later, have it unpack the tree and run
-`setup.bat`. If you ship MariaDB inside the installer, call
-`tools\setup.ps1 -SkipDownload` instead.
-
-MariaDB is GPL — keep its license files if you redistribute the zip. Server
+MariaDB is GPL — keep its license files if you redistribute MariaDB. Server
 binaries come from the tortoise-wow CI release; follow whatever terms apply.

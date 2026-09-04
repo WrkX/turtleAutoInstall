@@ -34,6 +34,7 @@
 /data/.server-release
 /data/.sql-release
 /data/.maps-url-sha256
+/data/.launcher-bundle
 *.pid
 *.dmp
 crash_*.dmp

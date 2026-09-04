@@ -14,7 +14,7 @@ $marker = Join-Path $root 'data\.sql-release'
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
 
 if ((Test-Path $haveSql) -and -not $Force) {
-    Write-Host "SQL already at $sqlDir"
+    Write-Host "SQL already at $sqlDir (pass -Force to replace from GitHub)"
     return
 }
 

@@ -92,8 +92,8 @@ func TestMapsZipURLPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := mapsZipURL(root, map[string]string{}); got != "https://cache.example/maps.zip" {
-		t.Fatalf("cached URL = %q, want cached URL", got)
+	if got := mapsZipURL(root, map[string]string{}); got != "https://conf.example/maps.zip" {
+		t.Fatalf("bundled conf URL = %q, want conf URL", got)
 	}
 	if got := mapsZipURL(root, map[string]string{"TORTOISE_WOW_MAPS_ZIP_URL": "https://override.example/maps.zip"}); got != "https://override.example/maps.zip" {
 		t.Fatalf("override URL = %q, want override URL", got)

@@ -78,10 +78,10 @@ func mapsZipURL(root string, env map[string]string) string {
 	if envOr(env, "DATANODES_FILE_CODE", "") != "" {
 		return "datanodes"
 	}
-	if u := readFirstURL(filepath.Join(root, "tools", ".cache", "maps-url.txt")); u != "" {
+	if u := readFirstURL(filepath.Join(root, "conf", "maps-url.txt")); u != "" {
 		return u
 	}
-	return readFirstURL(filepath.Join(root, "conf", "maps-url.txt"))
+	return readFirstURL(filepath.Join(root, "tools", ".cache", "maps-url.txt"))
 }
 
 func readTag(path string) string {

@@ -38,7 +38,7 @@ type model struct {
 	queue   []scriptStep
 	stepI   int
 	stepN   int
-	log     strings.Builder
+	log     *strings.Builder
 	lines   <-chan string
 	done    <-chan error
 	cancel  func()
@@ -60,17 +60,18 @@ type model struct {
 	quitting bool
 }
 
-func newModel(root string) model {
+func newModel(root string) *model {
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
 	sp.Style = lipgloss.NewStyle().Foreground(colGoldHi)
 
 	st := gatherStatus(root)
-	return model{
+	return &model{
 		root:   root,
 		status: st,
 		spin:   sp,
 		cursor: firstEnabled(st),
+		log:    &strings.Builder{},
 	}
 }
 
@@ -83,11 +84,11 @@ func firstEnabled(s Status) int {
 	return 0
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
 	return tea.Batch(m.spin.Tick, refreshStatus(m.root), checkLatest(m.root), scheduleTick())
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -156,7 +157,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) onDone(err error) (tea.Model, tea.Cmd) {
+func (m *model) onDone(err error) (tea.Model, tea.Cmd) {
 	m.lastErr = err
 	m.lines = nil
 	m.done = nil
@@ -181,7 +182,7 @@ func (m model) onDone(err error) (tea.Model, tea.Cmd) {
 	return m, refreshStatus(m.root)
 }
 
-func (m model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		m.quitting = true
 		if m.cancel != nil {
@@ -204,7 +205,7 @@ func (m model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m model) onRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) onRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
 		if m.lines == nil {
@@ -229,7 +230,7 @@ func (m model) onRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) onSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) onSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.screen = screenHome
@@ -248,7 +249,7 @@ func (m model) onSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) saveSettings() (tea.Model, tea.Cmd) {
+func (m *model) saveSettings() (tea.Model, tea.Cmd) {
 	if err := m.settings.Validate(); err != nil {
 		m.settings.err = err.Error()
 		return m, nil
@@ -263,7 +264,7 @@ func (m model) saveSettings() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(refreshStatus(m.root), checkLatest(m.root))
 }
 
-func (m model) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
 		steps := m.pending
@@ -282,7 +283,7 @@ func (m model) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) onAccountKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) onAccountKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.screen = screenHome
@@ -301,7 +302,7 @@ func (m model) onAccountKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) submitAccount() (tea.Model, tea.Cmd) {
+func (m *model) submitAccount() (tea.Model, tea.Cmd) {
 	user, hash, gm, err := m.account.validate()
 	if err != nil {
 		m.account.err = err.Error()
@@ -323,7 +324,7 @@ func (m model) submitAccount() (tea.Model, tea.Cmd) {
 	return m.beginRun("Create account", steps)
 }
 
-func (m model) copyRealmlist() (tea.Model, tea.Cmd) {
+func (m *model) copyRealmlist() (tea.Model, tea.Cmd) {
 	line := "set realmlist " + m.status.realmAddress()
 	if err := clipboard.WriteAll(line); err != nil {
 		m.flash = line
@@ -333,7 +334,7 @@ func (m model) copyRealmlist() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) openLogs() (tea.Model, tea.Cmd) {
+func (m *model) openLogs() (tea.Model, tea.Cmd) {
 	dir := filepath.Join(m.root, "logs")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		m.flash = err.Error()
@@ -353,7 +354,7 @@ func (m model) openLogs() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) onHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) onHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		m.quitting = true
@@ -414,7 +415,7 @@ func (m model) nextSelectable(delta int) int {
 	return m.cursor
 }
 
-func (m model) activate() (tea.Model, tea.Cmd) {
+func (m *model) activate() (tea.Model, tea.Cmd) {
 	a := menu[m.cursor]
 	if reason := a.disabled(m.status); reason != "" {
 		m.flash = reason
@@ -494,7 +495,7 @@ func (m model) planSteps(a action) []scriptStep {
 	return steps
 }
 
-func (m model) beginRun(label string, steps []scriptStep) (tea.Model, tea.Cmd) {
+func (m *model) beginRun(label string, steps []scriptStep) (tea.Model, tea.Cmd) {
 	if len(steps) == 0 {
 		return m, nil
 	}
@@ -503,6 +504,9 @@ func (m model) beginRun(label string, steps []scriptStep) (tea.Model, tea.Cmd) {
 	m.queue = steps
 	m.stepI = 0
 	m.stepN = len(steps)
+	if m.log == nil {
+		m.log = &strings.Builder{}
+	}
 	m.log.Reset()
 	m.lastErr = nil
 	m.aborted = false
@@ -584,7 +588,7 @@ func (m model) homeView() string {
 	header := renderHeader(m.status, m.width)
 	hint := m.status.hintBanner(m.width)
 	leftW, rightW := splitWidths(m.width)
-	left := m.status.column(leftW)
+	left := lipgloss.JoinVertical(lipgloss.Left, m.status.column(leftW), m.selectedActionHelp(leftW))
 
 	headerH := lipgloss.Height(header)
 	hintH := lipgloss.Height(hint)
@@ -598,9 +602,6 @@ func (m model) homeView() string {
 	if m.width >= 78 {
 		menuH := remain
 		right := m.menuCard(rightW, menuH)
-		h := max(lipgloss.Height(left), lipgloss.Height(right))
-		left = lipgloss.NewStyle().Height(h).Render(left)
-		right = lipgloss.NewStyle().Height(h).Render(right)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 	} else {
 		leftH := lipgloss.Height(left)
@@ -621,6 +622,24 @@ func (m model) homeView() string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, hint, body, help)
+}
+
+func (m model) selectedActionHelp(width int) string {
+	if m.cursor < 0 || m.cursor >= len(menu) {
+		return ""
+	}
+	a := menu[m.cursor]
+	text := a.Desc
+	st := selDescStyle
+	if reason := a.disabled(m.status); reason != "" {
+		text = reason
+		st = warnStyle
+	}
+	inner := max(width-2, 8)
+	return lipgloss.NewStyle().
+		Padding(1, 1, 0, 1).
+		Width(max(width, 10)).
+		Render(st.Width(inner).Render(text))
 }
 
 func (m model) menuCard(width, height int) string {
@@ -672,11 +691,6 @@ func (m model) renderMenu(width, height int) string {
 			}
 			row := spread("▸ "+a.Title, key, max(width, 8))
 			lines = append(lines, style.Width(max(width, 8)).Render(row))
-			desc := a.Desc
-			if reason := a.disabled(m.status); reason != "" {
-				desc = reason
-			}
-			lines = append(lines, selDescStyle.Width(max(width, 8)).Render("  "+desc))
 		} else {
 			st := itemStyle
 			if disabled {
@@ -771,41 +785,8 @@ func (m model) confirmView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, placed, help)
 }
 
-func findRoot() (string, error) {
-	exe, err := os.Executable()
-	if err == nil {
-		dir := filepath.Dir(exe)
-		if looksLikeRoot(dir) {
-			return dir, nil
-		}
-		if looksLikeRoot(filepath.Dir(dir)) {
-			return filepath.Dir(dir), nil
-		}
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	if looksLikeRoot(wd) {
-		return wd, nil
-	}
-	if looksLikeRoot(filepath.Dir(wd)) {
-		return filepath.Dir(wd), nil
-	}
-	return "", fmt.Errorf("cannot find portable root (need portable.env next to tools\\)")
-}
-
-func looksLikeRoot(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "portable.env"))
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(filepath.Join(dir, "tools"))
-	return err == nil
-}
-
 func main() {
-	root, err := findRoot()
+	root, err := bootstrapRoot()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

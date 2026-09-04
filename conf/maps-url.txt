@@ -1,8 +1,5 @@
 # Public Google Drive share link (Anyone with the link) or a raw https zip.
-#   https://drive.google.com/file/d/FILE_ID/view?usp=sharing
-#
-# Tracked in git. fetch-maps.ps1 also pulls the latest copy of this file from
-# GitHub into tools\.cache so a new URL is used even without git pull.
+# Tracked in git and embedded in tortoise.exe. Fetch maps uses this file first.
 # Override for yourself with TORTOISE_WOW_MAPS_ZIP_URL in portable.local.env.
 
-# https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing
+https://drive.google.com/file/d/1-cG8r_Kypd3g7Hsf-GISLticA_y02B3E/view?usp=sharing

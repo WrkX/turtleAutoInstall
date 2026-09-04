@@ -9,7 +9,7 @@ if exist "%~dp0tortoise.exe" (
 
 where go >nul 2>nul
 if errorlevel 1 (
-  echo tortoise.exe missing - build with: go build -o tortoise.exe .\tui
+  echo tortoise.exe missing - build with: go build -o tortoise.exe ./tui
   echo Or download a release binary next to this script.
   pause
   exit /b 1
