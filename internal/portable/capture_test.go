@@ -37,6 +37,30 @@ func TestDaemonCaptureRecordsStdout(t *testing.T) {
 	t.Fatalf("output=%q", cap.Output("t"))
 }
 
+func TestDaemonCaptureKeepsStdinOpen(t *testing.T) {
+	cap := NewDaemonCapture()
+	var (
+		pid int
+		err error
+	)
+	if runtime.GOOS == "windows" {
+		pid, err = cap.Start("pause", "cmd.exe", t.TempDir(), "/c", "pause")
+	} else {
+		pid, err = cap.Start("pause", "/bin/cat", t.TempDir())
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	if !processAlive(pid) {
+		t.Fatal("daemon exited; stdin was probably closed (mangosd treats that as shutdown)")
+	}
+	killPID(pid)
+	if leftover := waitGone([]int{pid}, 3*time.Second); len(leftover) > 0 {
+		t.Fatalf("pid %d still alive", pid)
+	}
+}
+
 func TestCaptureContextRoundTrip(t *testing.T) {
 	if captureFrom(nil) != nil {
 		t.Fatal("nil context should have no capture")

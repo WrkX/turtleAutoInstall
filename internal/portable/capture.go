@@ -90,14 +90,25 @@ func (c *DaemonCapture) Start(name, exe, workDir string, args ...string) (int, e
 	if err != nil {
 		return 0, err
 	}
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return 0, err
+	}
+	cmd.Stdin = stdinR
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 	if err := cmd.Start(); err != nil {
 		_ = pr.Close()
 		_ = pw.Close()
+		_ = stdinR.Close()
+		_ = stdinW.Close()
 		return 0, fmt.Errorf("failed to start %s: %w", exe, err)
 	}
 	_ = pw.Close()
+	_ = stdinR.Close()
+	holdStdin(cmd.Process.Pid, stdinW)
 
 	c.mu.Lock()
 	c.seq[name]++
@@ -109,6 +120,7 @@ func (c *DaemonCapture) Start(name, exe, workDir string, args ...string) (int, e
 		defer pr.Close()
 		c.ingest(name, gen, pr)
 		_ = cmd.Wait()
+		releaseHeldStdin(cmd.Process.Pid)
 		c.mu.Lock()
 		if d := c.items[name]; d != nil && d.gen == gen {
 			d.done = true

@@ -470,6 +470,8 @@ function Start-HiddenProcess {
     $psi.WorkingDirectory = $WorkingDirectory
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
+    # Keep stdin open: mangosd treats EOF as a console shutdown command.
+    $psi.RedirectStandardInput = $true
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi
     if (-not $proc.Start()) {

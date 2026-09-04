@@ -7,9 +7,34 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
+
+// mangosd/realmd read the console from stdin. A NUL/closed stdin is EOF, which
+// they treat as "server shutdown" a few seconds after boot. Keep a write-end
+// open for the life of each hidden daemon.
+var heldStdin sync.Map
+
+func holdStdin(pid int, w *os.File) {
+	if pid <= 0 || w == nil {
+		return
+	}
+	if old, ok := heldStdin.LoadAndDelete(pid); ok {
+		_ = old.(*os.File).Close()
+	}
+	heldStdin.Store(pid, w)
+}
+
+func releaseHeldStdin(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if w, ok := heldStdin.LoadAndDelete(pid); ok {
+		_ = w.(*os.File).Close()
+	}
+}
 
 func pidFile(root, name string) string {
 	return filepath.Join(root, "data", name+".pid")
@@ -63,6 +88,7 @@ func killPID(pid int) {
 	if pid <= 0 {
 		return
 	}
+	releaseHeldStdin(pid)
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return
@@ -91,9 +117,18 @@ func waitGone(pids []int, timeout time.Duration) []int {
 func (j *Job) startHidden(exe, workDir string, args ...string) (int, error) {
 	cmd := hiddenCommand(exe, args...)
 	cmd.Dir = workDir
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		return 0, err
+	}
+	cmd.Stdin = stdinR
 	if err := cmd.Start(); err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
 		return 0, fmt.Errorf("failed to start %s: %w", exe, err)
 	}
+	_ = stdinR.Close()
+	holdStdin(cmd.Process.Pid, stdinW)
 	pid := cmd.Process.Pid
 	_ = cmd.Process.Release()
 	return pid, nil
