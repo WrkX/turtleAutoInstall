@@ -3,6 +3,7 @@
 package portable
 
 import (
+	"io"
 	"net"
 	"os/exec"
 	"regexp"
@@ -16,7 +17,12 @@ import (
 
 func hiddenCommand(exe string, args ...string) *exec.Cmd {
 	cmd := exec.Command(exe, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_NO_WINDOW,
+	}
 	return cmd
 }
 

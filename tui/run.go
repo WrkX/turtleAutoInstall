@@ -31,12 +31,13 @@ type streamStartedMsg struct {
 }
 
 func startStream(root, script string, args []string) tea.Cmd {
-	return startStreamEnv(root, script, args, nil)
+	return startStreamEnv(root, script, args, nil, nil)
 }
 
-func startStreamEnv(root, script string, args []string, extraEnv map[string]string) tea.Cmd {
+func startStreamEnv(root, script string, args []string, extraEnv map[string]string, capture *portable.DaemonCapture) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithCancel(context.Background())
+		ctx = portable.WithCapture(ctx, capture)
 		lines := make(chan string, 64)
 		done := make(chan error, 1)
 		var cancelOnce sync.Once
@@ -108,14 +109,23 @@ func refreshStatus(root string) tea.Cmd {
 	}
 }
 
-func scheduleTick(sc screen) tea.Cmd {
+func scheduleTick(fast bool) tea.Cmd {
 	d := 2500 * time.Millisecond
-	if sc == screenConsoles {
-		d = 800 * time.Millisecond
+	if fast {
+		d = 400 * time.Millisecond
 	}
 	return tea.Tick(d, func(_ time.Time) tea.Msg {
 		return tickMsg{}
 	})
+}
+
+type stopDoneMsg struct{}
+
+func stopRealmThenQuit(root string) tea.Cmd {
+	return func() tea.Msg {
+		_ = portable.Run(context.Background(), root, "stop.ps1", nil, nil, nil)
+		return stopDoneMsg{}
+	}
 }
 
 func colorizeLine(s string) string {

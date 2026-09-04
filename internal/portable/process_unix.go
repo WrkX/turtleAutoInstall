@@ -3,6 +3,7 @@
 package portable
 
 import (
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -11,7 +12,10 @@ import (
 )
 
 func hiddenCommand(exe string, args ...string) *exec.Cmd {
-	return exec.Command(exe, args...)
+	cmd := exec.Command(exe, args...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd
 }
 
 func listenLoopback(port int) (net.Listener, error) {

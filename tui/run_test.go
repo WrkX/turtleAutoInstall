@@ -79,7 +79,7 @@ func TestLiveTUIGithubUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := startStreamEnv(root, "update.ps1", nil, nil)()
+	msg := startStreamEnv(root, "update.ps1", nil, nil, nil)()
 	started, ok := msg.(streamStartedMsg)
 	if !ok {
 		if d, yes := msg.(doneMsg); yes {

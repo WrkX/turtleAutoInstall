@@ -234,9 +234,9 @@ func (j *Job) StartRealm() error {
 		return cause
 	}
 
-	j.log("realmd (hidden - Realm consoles in the TUI)")
+	j.log("realmd (hidden - F1 or click the header pill)")
 	realmd := filepath.Join(serverDir, "realmd.exe")
-	rid, err := j.startHidden(realmd, serverDir)
+	rid, err := j.startRealmDaemon("realmd", realmd, serverDir)
 	if err != nil {
 		return fail(err)
 	}
@@ -247,9 +247,9 @@ func (j *Job) StartRealm() error {
 		return fail(fmt.Errorf("realmd exited during startup"))
 	}
 
-	j.log("mangosd (hidden - Realm consoles in the TUI)")
+	j.log("mangosd (hidden - F2 or click the header pill)")
 	mangosd := filepath.Join(serverDir, "mangosd.exe")
-	mid, err := j.startHidden(mangosd, serverDir)
+	mid, err := j.startRealmDaemon("mangosd", mangosd, serverDir)
 	if err != nil {
 		return fail(err)
 	}

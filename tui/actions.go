@@ -87,7 +87,7 @@ var menu = []action{
 		ID:      "consoles",
 		Group:   "Realm",
 		Title:   "Realm consoles",
-		Desc:    "Show hidden realmd and mangosd output (no extra terminal windows)",
+		Desc:    "Live realmd/mangosd stdout overlay (F1/F2 or click the header pills)",
 		Key:     "o",
 		Builtin: "consoles",
 		Disable: func(s Status) string {
@@ -257,7 +257,7 @@ var menu = []action{
 		ID:      "quit",
 		Group:   "Config",
 		Title:   "Quit",
-		Desc:    "Leave the installer (does not stop the realm)",
+		Desc:    "Stop MySQL, realmd, and mangosd, then leave",
 		Key:     "q",
 		Builtin: "quit",
 	},

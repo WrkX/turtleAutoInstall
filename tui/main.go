@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/WrkX/tortoise-wow-portable/internal/portable"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -23,7 +24,6 @@ const (
 	screenSettings
 	screenAccount
 	screenConfirm
-	screenConsoles
 )
 
 type model struct {
@@ -54,7 +54,10 @@ type model struct {
 	pending      []scriptStep
 	pendingLabel string
 
-	consoleTab int
+	capture   *portable.DaemonCapture
+	overlay   string
+	overlayVp viewport.Model
+	stopping  bool
 
 	flash    string
 	width    int
@@ -70,11 +73,13 @@ func newModel(root string) *model {
 
 	st := gatherStatus(root)
 	return &model{
-		root:   root,
-		status: st,
-		spin:   sp,
-		cursor: firstEnabled(st),
-		log:    &strings.Builder{},
+		root:      root,
+		status:    st,
+		spin:      sp,
+		cursor:    firstEnabled(st),
+		log:       &strings.Builder{},
+		capture:   portable.NewDaemonCapture(),
+		overlayVp: viewport.New(20, 8),
 	}
 }
 
@@ -88,7 +93,7 @@ func firstEnabled(s Status) int {
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, refreshStatus(m.root), checkLatest(m.root), scheduleTick(screenHome))
+	return tea.Batch(m.spin.Tick, refreshStatus(m.root), checkLatest(m.root), scheduleTick(false))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -118,13 +123,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		cmds := []tea.Cmd{scheduleTick(m.screen)}
+		cmds := []tea.Cmd{scheduleTick(m.overlay != "")}
 		if m.screen == screenHome || m.screen == screenRun {
 			cmds = append(cmds, refreshStatus(m.root))
 		}
-		if m.screen == screenConsoles {
-			cmds = append(cmds, refreshStatus(m.root))
-			m.reloadConsoles(false)
+		if m.overlay != "" {
+			m.reloadOverlay(false)
 		}
 		return m, tea.Batch(cmds...)
 
@@ -152,11 +156,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		return m.onDone(msg.err)
 
+	case stopDoneMsg:
+		m.quitting = true
+		return m, tea.Quit
+
+	case tea.MouseMsg:
+		return m.onMouse(msg)
+
 	case tea.KeyMsg:
 		return m.onKey(msg)
 	}
 
-	if m.screen == screenRun || m.screen == screenConsoles {
+	if m.screen == screenRun {
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
@@ -189,20 +200,31 @@ func (m *model) onDone(err error) (tea.Model, tea.Cmd) {
 	return m, refreshStatus(m.root)
 }
 
+func (m *model) beginQuit() (tea.Model, tea.Cmd) {
+	if m.stopping {
+		return m, nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.stopping = true
+	return m, stopRealmThenQuit(m.root)
+}
+
 func (m *model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
-		m.quitting = true
-		if m.cancel != nil {
-			m.cancel()
-		}
-		return m, tea.Quit
+		return m.beginQuit()
+	}
+	if m.stopping {
+		return m, nil
+	}
+	if m.overlay != "" {
+		return m.onOverlayKey(msg)
 	}
 
 	switch m.screen {
 	case screenRun:
 		return m.onRunKey(msg)
-	case screenConsoles:
-		return m.onConsolesKey(msg)
 	case screenSettings:
 		return m.onSettingsKey(msg)
 	case screenAccount:
@@ -227,6 +249,10 @@ func (m *model) onRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.stepN = 0
 			return m, nil
 		}
+	case "f1":
+		return m.openOverlay("realmd")
+	case "f2":
+		return m.openOverlay("mangosd")
 	case "x":
 		if m.cancel != nil {
 			m.aborted = true
@@ -366,8 +392,11 @@ func (m *model) openLogs() (tea.Model, tea.Cmd) {
 func (m *model) onHomeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
-		m.quitting = true
-		return m, tea.Quit
+		return m.beginQuit()
+	case "f1":
+		return m.openOverlay("realmd")
+	case "f2":
+		return m.openOverlay("mangosd")
 	case "r":
 		m.flash = ""
 		return m, tea.Batch(refreshStatus(m.root), checkLatest(m.root))
@@ -433,8 +462,7 @@ func (m *model) activate() (tea.Model, tea.Cmd) {
 
 	switch a.Builtin {
 	case "quit":
-		m.quitting = true
-		return m, tea.Quit
+		return m.beginQuit()
 	case "settings":
 		m.settings = newSettings(loadLocalEnv(m.root))
 		m.screen = screenSettings
@@ -539,7 +567,7 @@ func (m *model) runNext() tea.Cmd {
 		m.vp.SetContent(m.log.String())
 		m.vp.GotoBottom()
 	}
-	return startStreamEnv(m.root, step.Script, step.Args, step.Env)
+	return startStreamEnv(m.root, step.Script, step.Args, step.Env, m.capture)
 }
 
 func (m *model) layout() {
@@ -548,20 +576,16 @@ func (m *model) layout() {
 	if m.screen == screenRun {
 		h = max(m.height-7, 6)
 	}
-	if m.screen == screenConsoles {
-		h = max(m.height-7, 6)
-	}
 	if m.vp.Width == 0 && m.vp.Height == 0 {
 		m.vp = viewport.New(w, h)
 	} else {
 		m.vp.Width = w
 		m.vp.Height = h
 	}
-	if m.screen == screenConsoles {
-		m.reloadConsoles(false)
-		return
-	}
 	m.vp.SetContent(m.log.String())
+	if m.overlay != "" {
+		m.reloadOverlay(false)
+	}
 }
 
 func splitWidths(total int) (left, right int) {
@@ -584,24 +608,30 @@ func (m model) View() string {
 	if m.quitting {
 		return ""
 	}
+	if m.stopping {
+		return dimStyle.Render(" stopping mysql, realmd, and mangosd…")
+	}
 	if !m.ready {
 		return dimStyle.Render(" · loading")
 	}
 
+	var body string
 	switch m.screen {
 	case screenRun:
-		return m.runView()
-	case screenConsoles:
-		return m.consolesView()
+		body = m.runView()
 	case screenSettings:
-		return m.settingsView()
+		body = m.settingsView()
 	case screenAccount:
-		return m.accountView()
+		body = m.accountView()
 	case screenConfirm:
-		return m.confirmView()
+		body = m.confirmView()
 	default:
-		return m.homeView()
+		body = m.homeView()
 	}
+	if m.overlay != "" && (m.screen == screenHome || m.screen == screenRun) {
+		return stampOverlay(body, m.overlayBox(), m.width, m.height)
+	}
+	return body
 }
 
 func (m model) homeView() string {
@@ -633,7 +663,7 @@ func (m model) homeView() string {
 		body = lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
 
-	help := helpStyle.Render("↑↓ enter  a account  o consoles  c copy  s settings  u update  l logs  r refresh  q")
+	help := helpStyle.Render("↑↓ enter  f1 realmd  f2 mangosd  a account  o consoles  c copy  s settings  u update  l logs  r refresh  q stop+quit")
 	if m.flash != "" {
 		help = warnStyle.Render(m.flash)
 	}

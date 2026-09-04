@@ -15,6 +15,11 @@ func pidFile(root, name string) string {
 	return filepath.Join(root, "data", name+".pid")
 }
 
+// ReadPID returns the recorded pid for name, or 0 if missing/invalid.
+func ReadPID(root, name string) int {
+	return readPID(root, name)
+}
+
 func readPID(root, name string) int {
 	raw := strings.TrimSpace(readTrimmed(pidFile(root, name)))
 	n, err := strconv.Atoi(raw)

@@ -29,8 +29,11 @@ type Status struct {
 	VMaps          bool
 	MMaps          bool
 	Mysqld         bool
+	MysqldPID      int
 	Realmd         bool
+	RealmdPID      int
 	Mangosd        bool
+	MangosdPID     int
 	RealmPort      string
 	WorldPort      string
 	RealmAddress   string
@@ -125,6 +128,15 @@ func gatherStatus(root string) Status {
 	st.Mysqld = processRunning(mysqlName, mysqlExe)
 	st.Realmd = processRunning("realmd", firstExisting(filepath.Join(server, "realmd.exe"), filepath.Join(server, "realmd")))
 	st.Mangosd = processRunning("mangosd", firstExisting(filepath.Join(server, "mangosd.exe"), filepath.Join(server, "mangosd")))
+	if st.Mysqld {
+		st.MysqldPID = portable.ReadPID(root, "mysqld")
+	}
+	if st.Realmd {
+		st.RealmdPID = portable.ReadPID(root, "realmd")
+	}
+	if st.Mangosd {
+		st.MangosdPID = portable.ReadPID(root, "mangosd")
+	}
 	st.HasRealmLogs = realmLogExists(root, "realmd") || realmLogExists(root, "mangosd")
 	return st
 }
@@ -191,6 +203,70 @@ func pill(on bool, name, extra string) string {
 		out += dimStyle.Render(extra)
 	}
 	return out
+}
+
+func pidExtra(on bool, pid int) string {
+	if !on || pid <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("  %d", pid)
+}
+
+type pillHit struct {
+	Name  string
+	Open  bool
+	Left  int
+	Right int
+}
+
+func (s Status) livePillItems() []struct {
+	name      string
+	on        bool
+	extra     string
+	clickable bool
+} {
+	return []struct {
+		name      string
+		on        bool
+		extra     string
+		clickable bool
+	}{
+		{"mysql", s.Mysqld, pidExtra(s.Mysqld, s.MysqldPID), false},
+		{"realmd", s.Realmd, " :" + s.RealmPort + pidExtra(s.Realmd, s.RealmdPID), true},
+		{"mangosd", s.Mangosd, " :" + s.WorldPort + pidExtra(s.Mangosd, s.MangosdPID), true},
+	}
+}
+
+func (s Status) livePillsLayout() (string, []pillHit) {
+	const sep = "   "
+	items := s.livePillItems()
+	parts := make([]string, 0, len(items))
+	hits := make([]pillHit, 0, len(items))
+	x := 0
+	for i, it := range items {
+		if i > 0 {
+			x += lipgloss.Width(sep)
+		}
+		p := pill(it.on, it.name, it.extra)
+		w := lipgloss.Width(p)
+		hits = append(hits, pillHit{Name: it.name, Open: it.clickable, Left: x, Right: x + w})
+		parts = append(parts, p)
+		x += w
+	}
+	return strings.Join(parts, sep), hits
+}
+
+func (s Status) pillAt(x, y int) string {
+	if y != 1 {
+		return ""
+	}
+	_, hits := s.livePillsLayout()
+	for _, h := range hits {
+		if h.Open && x >= h.Left && x < h.Right {
+			return h.Name
+		}
+	}
+	return ""
 }
 
 func (s Status) mapsValue() string {
@@ -349,11 +425,8 @@ func (s Status) versionBadge() string {
 }
 
 func (s Status) livePills() string {
-	return strings.Join([]string{
-		pill(s.Mysqld, "mysql", ""),
-		pill(s.Realmd, "realmd", " :"+s.RealmPort),
-		pill(s.Mangosd, "mangosd", " :"+s.WorldPort),
-	}, "   ")
+	text, _ := s.livePillsLayout()
+	return text
 }
 
 func renderHeader(s Status, width int) string {
