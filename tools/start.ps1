@@ -43,8 +43,8 @@ $startedMysqlHere = ((-not $mysqlWasRecorded) -and $mysqlPidAfter -and
 
 $started = @()
 try {
-    Write-Host "realmd"
-    $realmdProc = Start-Process -FilePath (Join-Path $serverDir 'realmd.exe') -WorkingDirectory $serverDir -PassThru
+    Write-Host "realmd (hidden - Realm consoles in the TUI)"
+    $realmdProc = Start-HiddenProcess -FilePath (Join-Path $serverDir 'realmd.exe') -WorkingDirectory $serverDir
     Write-PortablePid -ProcessName 'realmd' -ProcessId $realmdProc.Id
     $started += @{ Name = 'realmd'; Path = (Join-Path $serverDir 'realmd.exe'); Id = $realmdProc.Id }
     Start-Sleep -Seconds 2
@@ -52,8 +52,8 @@ try {
         throw "realmd exited during startup (code $($realmdProc.ExitCode))"
     }
 
-    Write-Host "mangosd"
-    $mangosdProc = Start-Process -FilePath (Join-Path $serverDir 'mangosd.exe') -WorkingDirectory $serverDir -PassThru
+    Write-Host "mangosd (hidden - Realm consoles in the TUI)"
+    $mangosdProc = Start-HiddenProcess -FilePath (Join-Path $serverDir 'mangosd.exe') -WorkingDirectory $serverDir
     Write-PortablePid -ProcessName 'mangosd' -ProcessId $mangosdProc.Id
     $started += @{ Name = 'mangosd'; Path = (Join-Path $serverDir 'mangosd.exe'); Id = $mangosdProc.Id }
     Start-Sleep -Seconds 2

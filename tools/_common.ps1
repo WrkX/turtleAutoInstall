@@ -460,6 +460,24 @@ function Write-PortablePid {
     Set-Content -LiteralPath $file -Value $ProcessId -Encoding ASCII
 }
 
+function Start-HiddenProcess {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string]$WorkingDirectory
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.WorkingDirectory = $WorkingDirectory
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    if (-not $proc.Start()) {
+        throw "failed to start $FilePath"
+    }
+    return $proc
+}
+
 function Remove-PortablePid {
     param([Parameter(Mandatory)][string]$ProcessName)
     Remove-Item -LiteralPath (Get-PortablePidFilePath -ProcessName $ProcessName) -Force -ErrorAction SilentlyContinue

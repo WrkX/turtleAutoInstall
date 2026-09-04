@@ -1,10 +1,11 @@
 # Tortoise-WoW portable (Windows)
 
 The usual install is a single `tortoise.exe` from GitHub Releases. Put it in an
-empty folder and run it. On first launch it unpacks the helper scripts and
-default config next to the exe; **Full setup** then downloads MariaDB, the
+empty folder and run it. On first launch it writes default config next to the
+exe; **Full setup** then downloads MariaDB, the
 [tortoise-wow](https://github.com/WrkX/tortoise-wow) server + SQL zips, and maps
-when `conf/maps-url.txt` has a zip URL.
+when `conf/maps-url.txt` has a zip URL. Installer jobs run inside the exe
+(Go), not by unpacking PowerShell scripts.
 
 MariaDB lives in that folder next to the server binaries. No system install, no
 Windows service — **Start realm** brings it up, **Stop realm** kills it.
@@ -23,8 +24,8 @@ Override with `TORTOISE_WOW_MAPS_ZIP_URL` in `portable.local.env`.
    and prints the realmlist. The mangosd `account create` console command
    remains a fallback.
 
-Replacing `tortoise.exe` with a newer release refreshes the bundled scripts.
-Your `portable.local.env`, databases, and maps stay put.
+Replacing `tortoise.exe` with a newer release refreshes bundled config
+templates. Your `portable.local.env`, databases, and maps stay put.
 
 From this git checkout you can still run `tui.bat`, or build with
 `go build -o tortoise.exe ./tui` (set `GOOS=windows` `GOARCH=amd64` from Linux).
@@ -44,7 +45,7 @@ tortoise.exe            launcher (the only file you download)
 portable.env            defaults (created if missing)
 portable.local.env      your overrides (gitignored)
 conf\my.ini.template
-tools\                  scripts unpacked from the exe
+tools\.cache\           download cache (created as needed)
 mariadb\                filled by setup
 data\mysql\             datadir
 server\                 binaries
@@ -86,7 +87,7 @@ at a local single-player realm.
 Import follows the same recipe as INSTALL-WINDOWS.md in the source tree
 (`create_databases`, `sql/base`, migrations with `--force` + mark applied,
 playerbot SQL). To wipe and reload, use **Reimport databases** in the TUI
-(or `powershell -File tools\setup.ps1 -ForceReimport`).
+(or **Reimport databases** in the TUI).
 
 MariaDB is GPL — keep its license files if you redistribute MariaDB. Server
 binaries come from the tortoise-wow CI release; follow whatever terms apply.

@@ -23,7 +23,7 @@ func resolveRoot() (string, error) {
 
 	exe, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("cannot find portable root (need portable.env next to tools\\)")
+		return "", fmt.Errorf("cannot find portable root (need portable.env next to the exe)")
 	}
 	exe, err = filepath.EvalSymlinks(exe)
 	if err != nil {
@@ -31,7 +31,7 @@ func resolveRoot() (string, error) {
 	}
 	dir := filepath.Dir(exe)
 	if isGoBuildBinary(exe) {
-		return "", fmt.Errorf("cannot find portable root (need portable.env next to tools\\)")
+		return "", fmt.Errorf("cannot find portable root (need portable.env next to the exe)")
 	}
 	if looksLikeRoot(dir) {
 		return dir, nil
@@ -47,10 +47,6 @@ func looksLikeRoot(dir string) bool {
 		return false
 	}
 	_, err := os.Stat(filepath.Join(dir, "portable.env"))
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(filepath.Join(dir, "tools"))
 	return err == nil
 }
 
@@ -68,7 +64,7 @@ func bootstrapRoot() (string, error) {
 		return "", fmt.Errorf("unpack launcher files: %w", err)
 	}
 	if !looksLikeRoot(root) {
-		return "", fmt.Errorf("cannot find portable root (need portable.env next to tools\\)")
+		return "", fmt.Errorf("cannot find portable root (need portable.env next to the exe)")
 	}
 	return root, nil
 }

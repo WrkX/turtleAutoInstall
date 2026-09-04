@@ -84,6 +84,20 @@ var menu = []action{
 		},
 	},
 	{
+		ID:      "consoles",
+		Group:   "Realm",
+		Title:   "Realm consoles",
+		Desc:    "Show hidden realmd and mangosd output (no extra terminal windows)",
+		Key:     "o",
+		Builtin: "consoles",
+		Disable: func(s Status) string {
+			if !s.Realmd && !s.Mangosd && !s.HasRealmLogs {
+				return "start the realm first"
+			}
+			return ""
+		},
+	},
+	{
 		ID:      "account",
 		Group:   "Realm",
 		Title:   "Create account",

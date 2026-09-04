@@ -23,6 +23,7 @@ const (
 	screenSettings
 	screenAccount
 	screenConfirm
+	screenConsoles
 )
 
 type model struct {
@@ -52,6 +53,8 @@ type model struct {
 	confirmBody  string
 	pending      []scriptStep
 	pendingLabel string
+
+	consoleTab int
 
 	flash    string
 	width    int
@@ -85,7 +88,7 @@ func firstEnabled(s Status) int {
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, refreshStatus(m.root), checkLatest(m.root), scheduleTick())
+	return tea.Batch(m.spin.Tick, refreshStatus(m.root), checkLatest(m.root), scheduleTick(screenHome))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -115,9 +118,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		cmds := []tea.Cmd{scheduleTick()}
+		cmds := []tea.Cmd{scheduleTick(m.screen)}
 		if m.screen == screenHome || m.screen == screenRun {
 			cmds = append(cmds, refreshStatus(m.root))
+		}
+		if m.screen == screenConsoles {
+			cmds = append(cmds, refreshStatus(m.root))
+			m.reloadConsoles(false)
 		}
 		return m, tea.Batch(cmds...)
 
@@ -149,7 +156,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onKey(msg)
 	}
 
-	if m.screen == screenRun {
+	if m.screen == screenRun || m.screen == screenConsoles {
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
@@ -194,6 +201,8 @@ func (m *model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenRun:
 		return m.onRunKey(msg)
+	case screenConsoles:
+		return m.onConsolesKey(msg)
 	case screenSettings:
 		return m.onSettingsKey(msg)
 	case screenAccount:
@@ -431,6 +440,8 @@ func (m *model) activate() (tea.Model, tea.Cmd) {
 		m.screen = screenSettings
 		m.layout()
 		return m, m.settings.inputs[0].Focus()
+	case "consoles":
+		return m.openConsoles()
 	case "account":
 		m.account = newAccountForm()
 		m.screen = screenAccount
@@ -537,11 +548,18 @@ func (m *model) layout() {
 	if m.screen == screenRun {
 		h = max(m.height-7, 6)
 	}
+	if m.screen == screenConsoles {
+		h = max(m.height-7, 6)
+	}
 	if m.vp.Width == 0 && m.vp.Height == 0 {
 		m.vp = viewport.New(w, h)
 	} else {
 		m.vp.Width = w
 		m.vp.Height = h
+	}
+	if m.screen == screenConsoles {
+		m.reloadConsoles(false)
+		return
 	}
 	m.vp.SetContent(m.log.String())
 }
@@ -573,6 +591,8 @@ func (m model) View() string {
 	switch m.screen {
 	case screenRun:
 		return m.runView()
+	case screenConsoles:
+		return m.consolesView()
 	case screenSettings:
 		return m.settingsView()
 	case screenAccount:
@@ -613,7 +633,7 @@ func (m model) homeView() string {
 		body = lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
 
-	help := helpStyle.Render("↑↓ enter  a account  c copy  s settings  u update  l logs  r refresh  q")
+	help := helpStyle.Render("↑↓ enter  a account  o consoles  c copy  s settings  u update  l logs  r refresh  q")
 	if m.flash != "" {
 		help = warnStyle.Render(m.flash)
 	}

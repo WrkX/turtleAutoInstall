@@ -14,12 +14,10 @@ import (
 //go:embed portable.env
 //go:embed conf/my.ini.template
 //go:embed conf/maps-url.txt
-//go:embed tools/*.ps1
 var FS embed.FS
 
-// Ensure writes bundled scripts and default config into root so a lone
-// tortoise.exe can bootstrap a portable install. A git checkout keeps its
-// working-tree scripts; only missing files are created there.
+// Ensure writes default config next to a standalone tortoise.exe.
+// PowerShell tools are not unpacked; the TUI runs those jobs in Go.
 func Ensure(root string) error {
 	if root == "" {
 		return nil
@@ -42,8 +40,10 @@ func Ensure(root string) error {
 		if d.IsDir() {
 			return nil
 		}
-		base := path.Base(name)
-		if strings.HasPrefix(base, ".") {
+		if strings.HasPrefix(path.Base(name), ".") {
+			return nil
+		}
+		if strings.HasPrefix(name, "tools/") {
 			return nil
 		}
 		dest := filepath.Join(root, filepath.FromSlash(name))

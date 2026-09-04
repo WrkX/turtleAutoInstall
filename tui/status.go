@@ -3,13 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/WrkX/tortoise-wow-portable/internal/portable"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -25,6 +23,7 @@ type Status struct {
 	HasMangosdConf bool
 	HasRealmdConf  bool
 	HasMapsAll     bool
+	HasRealmLogs   bool
 	DBC            bool
 	Maps           bool
 	VMaps          bool
@@ -54,56 +53,8 @@ func dirHasEntries(path string) bool {
 }
 
 func processRunning(name, executable string) bool {
-	if executable == "" {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		// tasklist only knows the image name, which can belong to a different
-		// portable install. Query the executable path so status pills are scoped
-		// to this installation just like start.ps1/stop.ps1.
-		script := "$expected=[IO.Path]::GetFullPath($env:TORTOISE_EXPECTED_EXE).TrimEnd('\\').ToLowerInvariant(); $name=$env:TORTOISE_PROCESS_NAME+'.exe'; $found=@(Get-CimInstance Win32_Process -Filter (\"Name='\"+$name+\"'\") -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath([string]$_.ExecutablePath).TrimEnd('\\').ToLowerInvariant() -eq $expected }); if ($found.Count -gt 0) { exit 0 }; exit 1"
-		cmd := exec.Command(powershellBin(), "-NoProfile", "-Command", script)
-		cmd.Env = childEnv(map[string]string{
-			"TORTOISE_EXPECTED_EXE": executable,
-			"TORTOISE_PROCESS_NAME": name,
-		})
-		return cmd.Run() == nil
-	}
-
-	// On Linux, /proc gives us the same exact-path check without relying on a
-	// process name that could be shared by another checkout.
-	out, err := exec.Command("pgrep", "-x", name).Output()
-	if err != nil {
-		return false
-	}
-	expected, err := filepath.EvalSymlinks(executable)
-	if err != nil {
-		expected = filepath.Clean(executable)
-	}
-	for _, raw := range strings.Fields(string(out)) {
-		pid, err := strconv.Atoi(raw)
-		if err != nil || pid <= 0 {
-			continue
-		}
-		actual := ""
-		if runtime.GOOS == "linux" {
-			actual, err = os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
-		} else {
-			var psOut []byte
-			psOut, err = exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
-			actual = strings.TrimSpace(string(psOut))
-		}
-		if err != nil {
-			continue
-		}
-		if resolved, err := filepath.EvalSymlinks(actual); err == nil {
-			actual = resolved
-		}
-		if filepath.Clean(actual) == filepath.Clean(expected) {
-			return true
-		}
-	}
-	return false
+	_ = name
+	return portable.PathIsRunning(executable)
 }
 
 func findMariaDBExecutable(root string) string {
@@ -174,6 +125,7 @@ func gatherStatus(root string) Status {
 	st.Mysqld = processRunning(mysqlName, mysqlExe)
 	st.Realmd = processRunning("realmd", firstExisting(filepath.Join(server, "realmd.exe"), filepath.Join(server, "realmd")))
 	st.Mangosd = processRunning("mangosd", firstExisting(filepath.Join(server, "mangosd.exe"), filepath.Join(server, "mangosd")))
+	st.HasRealmLogs = realmLogExists(root, "realmd") || realmLogExists(root, "mangosd")
 	return st
 }
 

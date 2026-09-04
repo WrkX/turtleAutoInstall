@@ -14,14 +14,8 @@ func TestLooksLikeRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "portable.env"), []byte("X=1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if looksLikeRoot(root) {
-		t.Fatal("portable.env alone is not enough")
-	}
-	if err := os.Mkdir(filepath.Join(root, "tools"), 0755); err != nil {
-		t.Fatal(err)
-	}
 	if !looksLikeRoot(root) {
-		t.Fatal("expected portable.env + tools to look like a root")
+		t.Fatal("portable.env should be enough to treat a folder as a root")
 	}
 }
 

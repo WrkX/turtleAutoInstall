@@ -10,23 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestChildEnvReplacesSecret(t *testing.T) {
-	t.Setenv("TORTOISE_WOW_ACCOUNT_SHA_PASS_HASH", "old")
-	env := childEnv(map[string]string{"TORTOISE_WOW_ACCOUNT_SHA_PASS_HASH": "new"})
-	count := 0
-	for _, item := range env {
-		if strings.HasPrefix(item, "TORTOISE_WOW_ACCOUNT_SHA_PASS_HASH=") {
-			count++
-			if item != "TORTOISE_WOW_ACCOUNT_SHA_PASS_HASH=new" {
-				t.Fatalf("unexpected secret entry %q", item)
-			}
-		}
-	}
-	if count != 1 {
-		t.Fatalf("secret entry count = %d, want 1", count)
-	}
-}
-
 func TestCleanupPartialArtifacts(t *testing.T) {
 	root := t.TempDir()
 	cache := filepath.Join(root, "tools", ".cache")
