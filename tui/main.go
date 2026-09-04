@@ -630,16 +630,16 @@ func (m model) selectedActionHelp(width int) string {
 	}
 	a := menu[m.cursor]
 	text := a.Desc
-	st := selDescStyle
+	border := colMoss
+	bodyStyle := selDescStyle
 	if reason := a.disabled(m.status); reason != "" {
 		text = reason
-		st = warnStyle
+		border = colWarn
+		bodyStyle = warnStyle
 	}
-	inner := max(width-2, 8)
-	return lipgloss.NewStyle().
-		Padding(1, 1, 0, 1).
-		Width(max(width, 10)).
-		Render(st.Width(inner).Render(text))
+	inner := max(width-4, 8)
+	body := bodyStyle.Width(inner).Render(text)
+	return card(a.Title, body, width, border)
 }
 
 func (m model) menuCard(width, height int) string {

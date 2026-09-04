@@ -55,7 +55,8 @@ func looksLikeRoot(dir string) bool {
 }
 
 func isGoBuildBinary(exe string) bool {
-	return strings.Contains(filepath.ToSlash(exe), "/go-build")
+	slash := strings.ReplaceAll(exe, "\\", "/")
+	return strings.Contains(slash, "/go-build")
 }
 
 func bootstrapRoot() (string, error) {

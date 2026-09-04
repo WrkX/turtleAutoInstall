@@ -27,9 +27,15 @@ func TestLooksLikeRoot(t *testing.T) {
 
 func TestIsGoBuildBinary(t *testing.T) {
 	if !isGoBuildBinary(`C:\Users\me\AppData\Local\Temp\go-build123\b001\exe\main.exe`) {
-		t.Fatal("go run binary should be treated as ephemeral")
+		t.Fatal("windows go run binary should be treated as ephemeral")
+	}
+	if !isGoBuildBinary("/tmp/go-build123/b001/exe/main") {
+		t.Fatal("unix go run binary should be treated as ephemeral")
 	}
 	if isGoBuildBinary(`C:\Games\TortoiseWow\tortoise.exe`) {
 		t.Fatal("installed exe should not look like a go-build binary")
+	}
+	if isGoBuildBinary("/opt/tortoise/tortoise") {
+		t.Fatal("unix install path should not look like a go-build binary")
 	}
 }
